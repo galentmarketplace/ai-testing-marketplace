@@ -1,0 +1,8 @@
+{
+  "name": "e2e-runner",
+  "private": true,
+  "description": "Isolated Playwright runner the pipeline shells out to for real functional/regression execution.",
+  "devDependencies": {
+    "@playwright/test": "^1.47.0"
+  }
+}

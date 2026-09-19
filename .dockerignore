@@ -1,0 +1,15 @@
+.venv/
+**/node_modules/
+data/
+generated/
+repos/
+.git/
+.github/
+*.vsix
+vscode-extension/out/
+vscode-extension/node_modules/
+design-system/
+**/__pycache__/
+**/*.pyc
+.env
+*.log

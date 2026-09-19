@@ -1,0 +1,69 @@
+# The marketplace platform itself. Single replica by design: SQLite + the Fernet secret.key live on
+# one PVC, so scaling out would need a shared DB (see docs/DEPLOY.md "Scaling").
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: marketplace-data
+  namespace: ai-testing
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: marketplace
+  namespace: ai-testing
+  labels: { app: marketplace }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }          # RWO volume — never two pods holding the SQLite file
+  selector:
+    matchLabels: { app: marketplace }
+  template:
+    metadata:
+      labels: { app: marketplace }
+    spec:
+      serviceAccountName: marketplace   # grants read-only pods + pod-metrics access
+      containers:
+        - name: marketplace
+          image: ghcr.io/OWNER/ai-testing-marketplace:latest   # ← set your registry/tag
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 8090, name: http }]
+          envFrom:
+            - secretRef: { name: marketplace-env }
+          env:
+            - { name: PORT,        value: "8090" }
+            - { name: MOCK_LLM,    value: "0" }
+            - { name: REAL_RUNNER, value: "1" }
+          resources:                     # request/limit so the platform itself is schedulable + capped
+            requests: { cpu: "300m", memory: "768Mi" }
+            limits:   { cpu: "1500m", memory: "2Gi" }
+          volumeMounts:
+            - { name: data,      mountPath: /app/data }
+            - { name: generated, mountPath: /app/generated }
+          readinessProbe:
+            httpGet: { path: /api/manifest, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/manifest, port: http }
+            initialDelaySeconds: 40
+            periodSeconds: 30
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: marketplace-data }
+        - name: generated
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: marketplace
+  namespace: ai-testing
+spec:
+  selector: { app: marketplace }
+  ports: [{ name: http, port: 80, targetPort: http }]
+  type: ClusterIP                        # switch to LoadBalancer, or use the Ingress below

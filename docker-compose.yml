@@ -1,0 +1,27 @@
+# Run the AI Testing Marketplace locally or on a single cloud VM (e.g. an Oracle Always-Free ARM box):
+#   cp .env.example .env && edit it, then:  docker compose up --build   → http://localhost:8090
+services:
+  marketplace:
+    build: .
+    image: ai-testing-marketplace:latest
+    ports: ["${PORT:-8090}:8090"]
+    env_file: [.env]                       # ANTHROPIC_API_KEY, GitHub OAuth, Jenkins, PUBLIC_URL…
+    environment:
+      PORT: "8090"
+      MOCK_LLM: "${MOCK_LLM:-0}"           # 0 = real Claude (needs ANTHROPIC_API_KEY)
+      REAL_RUNNER: "${REAL_RUNNER:-1}"     # 1 = actually run Playwright / k6
+      MAX_RETRIES: "${MAX_RETRIES:-3}"
+    volumes:
+      - marketplace-data:/app/data         # SQLite DB + Fernet secret.key — MUST persist
+      - marketplace-generated:/app/generated
+      - marketplace-repos:/app/repos
+      # Per-pod performance against a cluster: mount a read-only kubeconfig and set
+      # KUBECONFIG=/kube/config in .env (in-cluster deploys use the ServiceAccount instead).
+      # - ${HOME}/.kube/config:/kube/config:ro
+    extra_hosts: ["host.docker.internal:host-gateway"]   # reach an app running on the host
+    restart: unless-stopped
+
+volumes:
+  marketplace-data:
+  marketplace-generated:
+  marketplace-repos:

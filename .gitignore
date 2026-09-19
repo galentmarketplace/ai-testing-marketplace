@@ -1,0 +1,37 @@
+# ---- Secrets & state: NEVER commit ----
+.env
+.env.local
+.env.*.local
+# SQLite DB (holds ENCRYPTED project secrets) + the Fernet secret.key that decrypts them
+data/
+*.key
+*.pem
+kubeconfig
+.kube/
+
+# ---- Python ----
+.venv/
+venv/
+__pycache__/
+*.pyc
+.ruff_cache/
+.pytest_cache/
+
+# ---- Cloned targets & agent output ----
+repos/
+generated/
+
+# ---- Node / Playwright ----
+node_modules/
+e2e-runner/node_modules/
+e2e-runner/test-results/
+e2e-runner/playwright-report/
+ms-playwright/
+
+# ---- VS Code extension build output ----
+vscode-extension/out/
+vscode-extension/*.vsix
+
+# ---- Misc ----
+.DS_Store
+*.log

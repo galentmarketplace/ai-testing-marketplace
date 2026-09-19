@@ -1,0 +1,25 @@
+# Public URL for the platform. Set PUBLIC_URL in the secret to the same host, and register
+# <PUBLIC_URL>/auth/github/callback in your GitHub OAuth app.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: marketplace
+  namespace: ai-testing
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"   # SSE run stream must not be cut
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"       # stream events immediately
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: testing.example.com          # ← your host
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: marketplace
+                port: { name: http }
+  # tls:
+  #   - hosts: ["testing.example.com"]
+  #     secretName: marketplace-tls

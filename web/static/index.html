@@ -1,0 +1,2120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agentic Testing Pipeline</title>
+<!-- Typography: "Dashboard Data" pairing (Fira Code + Fira Sans) via ui-ux-pro-max design system -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  /* Design tokens — Agentic Testing Pipeline (ui-ux-pro-max: Real-Time Monitoring, Slate + status colors) */
+  :root {
+    --bg:#0F172A; --panel:#1E293B; --panel2:#273449; --border:#334155;
+    --text:#F8FAFC; --muted:#94A3B8; --accent:#58a6ff; --accent2:#a371f7;
+    --ok:#22C55E; --fail:#EF4444; --warn:#D29922; --teal:#39C5CF;
+    --font-sans:'Fira Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sans-serif;
+    --font-mono:'Fira Code','SFMono-Regular',Consolas,Menlo,monospace;
+    --mono:var(--font-mono);
+    --focus:#7CC4FF;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:var(--font-sans);
+         background:var(--bg); color:var(--text); font-size:14px; -webkit-font-smoothing:antialiased; }
+  /* Accessibility: visible keyboard focus (checklist §1) */
+  a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
+    outline:2px solid var(--focus); outline-offset:2px; border-radius:6px;
+  }
+  /* Accessibility: honour reduced-motion (checklist + animation anti-patterns) */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important; }
+  }
+  header { display:flex; align-items:center; gap:14px; padding:14px 22px; border-bottom:1px solid var(--border);
+           background:linear-gradient(90deg,#161b22,#12161d); position:sticky; top:0; z-index:10; }
+  header h1 { font-size:15px; margin:0; font-weight:600; letter-spacing:.3px; font-family:var(--font-mono); }
+  header .dot { width:9px; height:9px; border-radius:50%; background:var(--muted); }
+  header .dot.live { background:var(--ok); box-shadow:0 0 8px var(--ok); animation:pulse 1.2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  .tag { font-size:11px; color:var(--muted); border:1px solid var(--border); padding:2px 8px; border-radius:20px; }
+  /* Two panes: LEFT = agent execution (graph, full height) · RIGHT = config + dashboard */
+  .layout { display:grid; grid-template-columns:minmax(0,1fr) 470px; gap:0; height:calc(100vh - 55px); }
+  .execpane { padding:22px; overflow:hidden; display:flex; flex-direction:column; gap:18px; }
+  .execpane .graphCard { flex:1; display:flex; flex-direction:column; margin-bottom:0; min-height:0; }
+  .execpane .canvas { flex:1; display:grid; place-items:center; min-height:0; }
+  .execpane .logcard { flex:0 0 auto; }              /* reasoning log under the graph */
+  .execpane .logcard .body { max-height:none; padding:10px 16px; }
+  .execpane .logcard #log { height:120px; }
+  .rightpane { border-left:1px solid var(--border); overflow-y:auto; padding:22px; display:flex; flex-direction:column; gap:18px; background:var(--bg); }
+  .rightpane > * { flex:0 0 auto; }   /* don't let the scroll container shrink cards to nothing */
+  .rightpane .grid { grid-template-columns:1fr; }        /* single column on the right */
+  .rightpane .card.full { grid-column:auto; }
+  .body.cfg { max-height:none; overflow:visible; }        /* config form shows fully */
+  button.ghost { background:transparent; color:var(--text); border:1px solid var(--border); padding:6px 12px;
+                 font-size:12px; font-weight:500; width:auto; box-shadow:none; }
+  button.ghost:hover { border-color:var(--ok); color:var(--ok); background:transparent; transform:none; }
+  @media (max-width:1000px) {
+    .layout { grid-template-columns:1fr; height:auto; }
+    .execpane { height:72vh; }
+    .rightpane { border-left:none; border-top:1px solid var(--border); }
+  }
+  label { display:block; font-size:12px; color:var(--muted); margin:14px 0 5px; font-weight:500; }
+  input, textarea, select { width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text);
+                    border-radius:7px; padding:9px 11px; font-size:13px; font-family:inherit; }
+  select { cursor:pointer; }
+  textarea { resize:vertical; min-height:120px; line-height:1.5; }
+  .switch { display:flex; align-items:center; gap:8px; margin-top:14px; font-size:13px; }
+  .switch input { width:auto; }
+  button { background:var(--ok); color:#04160b; border:none; border-radius:7px; padding:11px 16px;
+           font-size:14px; font-weight:600; cursor:pointer; width:100%; margin-top:18px; transition:filter .18s ease, transform .18s ease; }
+  button:hover { filter:brightness(1.08); } button:active { transform:translateY(1px); }
+  button:disabled { opacity:.5; cursor:not-allowed; filter:none; transform:none; }
+  .hint { font-size:11px; color:var(--muted); margin-top:6px; line-height:1.5; }
+  code { font-family:var(--mono); font-size:11px; background:var(--bg); padding:1px 4px; border-radius:4px; }
+
+  /* ---- n8n-style workflow canvas (top → bottom) ---- */
+  .graphCard { border:1px solid var(--border); border-radius:14px; margin-bottom:22px; position:relative; overflow:hidden;
+               background:#0b1220; }
+  .graphCard h2 { font-size:13px; margin:0; padding:12px 16px; border-bottom:1px solid var(--border);
+                  display:flex; justify-content:space-between; align-items:center; font-weight:600;
+                  background:var(--panel); position:sticky; top:0; z-index:3; }
+  .canvas { position:relative; overflow:auto;
+            /* dotted canvas grid */
+            background-color:#0b1220;
+            background-image:radial-gradient(rgba(148,163,184,.14) 1px, transparent 1.4px);
+            background-size:22px 22px; background-position:-1px -1px; }
+  #graph { width:100%; height:auto; display:block; }
+  .legend { display:flex; flex-wrap:wrap; gap:14px; font-size:11px; color:var(--muted);
+            padding:9px 16px; border-top:1px solid var(--border); background:var(--panel); }
+  .legend span { display:flex; align-items:center; gap:5px; }
+  .legend i { width:10px; height:10px; border-radius:3px; display:inline-block; }
+
+  /* connectors */
+  .edge { fill:none; stroke:#33415c; stroke-width:2; transition:stroke .3s; stroke-linecap:round; }
+  .edge.flowing { stroke:var(--accent); stroke-width:2.6; stroke-dasharray:6 6; animation:march .5s linear infinite; }
+  .edge.done { stroke:#3b5273; }
+  .edge.faildone { stroke:var(--fail); opacity:.7; }
+  .edge.retry { stroke:#3a2b3a; stroke-dasharray:5 6; }
+  .edge.retry.flowing { stroke:var(--fail) !important; animation:march .5s linear infinite; }
+  @keyframes march { to { stroke-dashoffset:-24; } }
+  /* port dots on connectors */
+  .port { fill:#0b1220; stroke:#3b5273; stroke-width:1.6; transition:.25s; }
+  g.gnode.done .port, g.gnode.active .port { stroke:var(--cc); }
+
+  /* nodes = n8n cards */
+  g.gnode { opacity:.5; transition:opacity .3s; cursor:default; }
+  g.gnode.active, g.gnode.done, g.gnode.fail { opacity:1; }
+  .nodeBox { fill:#131c2e; stroke:#2b3a52; stroke-width:1.5; transition:.25s; }
+  g.gnode.active .nodeBox { stroke:var(--cc); filter:drop-shadow(0 0 8px var(--cc)); }
+  g.gnode.done  .nodeBox { stroke:var(--ok); }
+  g.gnode.fail  .nodeBox { stroke:var(--fail); filter:drop-shadow(0 0 8px var(--fail)); }
+  .iconChip { transition:.25s; }
+  .nicon { font-size:17px; }
+  .ncap  { fill:var(--cc); font-size:8.5px; letter-spacing:.8px; font-weight:700; font-family:var(--font-mono); }
+  .nlabel{ fill:var(--text); font-size:11.5px; font-weight:600; }
+  .nstatus{ fill:var(--muted); font-size:9px; font-family:var(--font-mono); }
+  .stepnum-bg{ fill:#22304a; transition:fill .25s; }
+  .stepnum{ fill:#0b1220; font-size:9.5px; font-weight:700; font-family:var(--font-mono); }
+  g.gnode.active .stepnum-bg{ fill:var(--cc); }
+  g.gnode.done .stepnum-bg{ fill:var(--ok); }
+  g.gnode.fail .stepnum-bg{ fill:var(--fail); }
+  /* layer-3 execution cards (smaller, dimmer surface) */
+  g.gnode.child .nodeBox { fill:#0f1826; }
+  .cicon { font-size:13px; }
+  .clabel{ fill:var(--text); font-size:10.5px; font-weight:600; }
+  /* left-gutter layer labels */
+  .layerLabel { fill:#586a86; font-size:9px; font-weight:700; letter-spacing:2px; font-family:var(--font-mono); }
+
+  /* orchestrator = n8n trigger node at the top */
+  g.orch .orchBox { fill:#1a1236; stroke:var(--accent2); stroke-width:2; transition:.25s; }
+  g.orch.thinking .orchBox { filter:drop-shadow(0 0 10px var(--accent2)); }
+  g.orch.done .orchBox { stroke:var(--ok); filter:drop-shadow(0 0 8px var(--ok)); }
+  g.orch.fail .orchBox { stroke:var(--fail); filter:drop-shadow(0 0 8px var(--fail)); }
+  .orchDot { fill:var(--accent2); }
+  g.orch.done .orchDot { fill:var(--ok); } g.orch.fail .orchDot { fill:var(--fail); }
+  g.orch.done .orchThought { fill:var(--ok); } g.orch.fail .orchThought { fill:var(--fail); }
+  g.orch.thinking .orchDot { animation:opulse 1.3s ease-in-out infinite; }
+  @keyframes opulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+  .orchIcon { font-size:22px; }
+  .orchTitle{ fill:#e4d6ff; font-size:13px; font-weight:800; letter-spacing:.5px; font-family:var(--font-mono); }
+  .orchSub  { fill:#9a86c4; font-size:9.5px; }
+  .orchThought{ fill:var(--accent); font-size:10px; font-weight:600; font-family:var(--font-mono); }
+
+  /* Step Functions terminals (Start / Succeeded / Blocked) */
+  .term .termBox { fill:#131c2e; stroke:#3b5273; stroke-width:1.5; }
+  .term.start .termBox { fill:#16203a; stroke:#4a5f86; }
+  .term.end .termBox { fill:rgba(34,197,94,.14); stroke:var(--ok); }
+  .term.blocked .termBox { fill:rgba(239,68,68,.14); stroke:var(--fail); }
+  .termTxt { fill:var(--muted); font-size:11px; font-weight:700; font-family:var(--font-mono); letter-spacing:.4px; }
+  .term.end .termTxt { fill:var(--ok); } .term.blocked .termTxt { fill:var(--fail); }
+  /* retry / attempt counter badge */
+  .attempt { fill:var(--fail); font-size:9px; font-weight:800; font-family:var(--font-mono); }
+  /* state entrance (fade only — never animate the group transform, it holds position) */
+  @keyframes stateIn { from { opacity:0; } to { opacity:1; } }
+  g.gnode.enter { animation:stateIn .3s ease-out; }
+
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+  .card h2 { font-size:13px; margin:0; padding:12px 16px; border-bottom:1px solid var(--border);
+             display:flex; justify-content:space-between; align-items:center; font-weight:600; }
+  .card .body { padding:14px 16px; max-height:340px; overflow:auto; }
+  .card.full { grid-column:1 / -1; }
+  .empty { color:var(--muted); font-size:13px; padding:8px 0; }
+
+  .ac { border-left:3px solid var(--accent2); padding:8px 12px; margin-bottom:10px; background:var(--panel2); border-radius:0 7px 7px 0; }
+  .ac .id { font-weight:700; color:var(--accent2); font-size:12px; }
+  .ac .pri { font-size:10px; text-transform:uppercase; color:var(--muted); border:1px solid var(--border); padding:1px 6px; border-radius:10px; margin-left:6px; }
+  .ac pre { white-space:pre-wrap; font-family:var(--mono); font-size:12px; margin:6px 0 4px; line-height:1.5; color:#c9d4e0; }
+  .chip { display:inline-block; font-size:10px; background:#21324a; color:var(--accent); padding:1px 7px; border-radius:10px; margin:2px 4px 0 0; }
+
+  .gate { display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid var(--border); }
+  .gate:last-child { border-bottom:none; }
+  .pill { font-size:11px; font-weight:700; padding:3px 10px; border-radius:20px; }
+  .pill.pass { background:rgba(63,185,80,.15); color:var(--ok); }
+  .pill.fail { background:rgba(248,81,73,.15); color:var(--fail); }
+  .gate .gname { font-weight:600; width:52px; }
+  .gate .reason { color:var(--muted); font-size:12px; }
+
+  .run { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border); font-size:13px; }
+  .run:last-child { border-bottom:none; }
+  .run .m { color:var(--muted); font-size:12px; font-family:var(--font-mono); }
+  .run .rate { font-weight:700; font-family:var(--font-mono); font-feature-settings:"tnum" 1; }
+
+  .artifact { display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px solid var(--border); }
+  .artifact:last-child { border-bottom:none; }
+  .artifact .fn { font-family:var(--mono); font-size:12px; color:var(--accent); cursor:pointer; word-break:break-all; }
+  .artifact .fn:hover { text-decoration:underline; }
+  .artifact .ty { font-size:10px; text-transform:uppercase; color:var(--muted); }
+
+  pre.code { background:#0a0d12; border:1px solid var(--border); border-radius:8px; padding:12px;
+             font-family:var(--mono); font-size:12px; overflow:auto; max-height:400px; line-height:1.55; color:#c9d4e0; }
+  .prbody { white-space:pre-wrap; font-size:13px; line-height:1.6; color:#c9d4e0; }
+
+  #log { background:#0a0d12; border:1px solid var(--border); border-radius:8px; padding:12px;
+         font-family:var(--mono); font-size:12px; height:170px; overflow-y:auto; line-height:1.6; }
+  #log .t { color:var(--muted); }
+  #log .n { color:var(--accent2); }
+
+  .modal { position:fixed; inset:0; background:rgba(0,0,0,.7); display:none; align-items:center; justify-content:center; z-index:50; }
+  .modal.show { display:flex; }
+  .modal .box { background:var(--panel); border:1px solid var(--border); border-radius:12px; width:min(820px,92vw); max-height:86vh; overflow:hidden; }
+  .modal h3 { margin:0; padding:14px 18px; border-bottom:1px solid var(--border); font-size:13px; font-family:var(--mono); display:flex; justify-content:space-between; }
+  .modal .x { cursor:pointer; color:var(--muted); }
+  .modal .mbody { padding:16px; overflow:auto; max-height:calc(86vh - 55px); }
+
+  /* ===================== APPLICATION SHELL ===================== */
+  header h1 { white-space:nowrap; }
+  .stepper { display:flex; gap:4px; margin-left:26px; }
+  .stepper button { background:transparent; color:var(--muted); border:1px solid transparent; box-shadow:none;
+      padding:6px 12px; border-radius:8px; font-size:12px; font-weight:500; font-family:var(--font-sans);
+      display:flex; align-items:center; gap:7px; width:auto; transition:all .15s ease; }
+  .stepper button .num { width:18px; height:18px; border-radius:50%; background:var(--panel2); color:var(--muted);
+      font-size:10px; font-weight:700; display:grid; place-items:center; border:1px solid var(--border); }
+  .stepper button:hover:not(:disabled) { color:var(--text); background:var(--panel2); transform:none; }
+  .stepper button.active { color:var(--text); background:var(--panel2); border-color:var(--border); }
+  .stepper button.active .num { background:var(--ok); color:#04160b; border-color:var(--ok); }
+  .stepper button.done .num { background:transparent; color:var(--ok); border-color:var(--ok); }
+  .stepper button:disabled { opacity:.4; cursor:not-allowed; }
+
+  .view { display:none; }
+  /* Soft fade+lift on every view switch — display:none→visible retriggers the animation. */
+  @keyframes viewIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  #homeView, #runsView, #resultsView, #projectsView, #flowsView, #configView, #agentsView { animation: viewIn .2s ease both; }
+  @media (prefers-reduced-motion: reduce){ #homeView, #runsView, #resultsView, #projectsView, #flowsView, #configView, #agentsView { animation:none; } }
+
+  /* Run-detail segmented control — two faces of ONE run (live graph ⟷ results), not two menu items. */
+  .run-detail-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; }
+  .run-tabs { display:inline-flex; gap:4px; background:var(--panel2); border:1px solid var(--border); border-radius:10px; padding:4px; }
+  .run-tabs-top { margin-bottom:20px; }
+  .rtab { background:transparent; border:none; color:var(--muted); font-family:inherit; font-size:12.5px; font-weight:600;
+    padding:6px 14px; border-radius:7px; cursor:pointer; display:inline-flex; align-items:center; gap:7px; white-space:nowrap;
+    transition:background .18s ease, color .18s ease; }
+  .rtab:hover { color:var(--text); background:transparent; transform:none; }
+  .rtab.active { background:var(--bg); color:var(--text); box-shadow:0 1px 2px rgba(0,0,0,.3); }
+  .rt-dot { width:7px; height:7px; border-radius:50%; background:var(--muted); flex:0 0 auto; }
+  .rtab.active[data-rt="run"] .rt-dot { background:var(--ok); box-shadow:0 0 0 3px rgba(34,197,94,.18); }
+  /* live pulse on the Runs nav item while a run is executing */
+  .sb-item .live-dot { width:8px; height:8px; border-radius:50%; background:var(--ok); margin-left:auto; flex:0 0 auto;
+    box-shadow:0 0 0 0 rgba(34,197,94,.5); animation:pulseDot 1.5s infinite; }
+  @keyframes pulseDot { 0%{box-shadow:0 0 0 0 rgba(34,197,94,.5)} 70%{box-shadow:0 0 0 7px rgba(34,197,94,0)} 100%{box-shadow:0 0 0 0 rgba(34,197,94,0)} }
+  @media (prefers-reduced-motion: reduce){ .sb-item .live-dot { animation:none; } }
+  .page { max-width:1120px; margin:0 auto; padding:38px 26px 60px; }
+  .page-head { margin-bottom:26px; }
+  .page-head h2 { font-family:var(--font-mono); font-size:24px; margin:0 0 8px; letter-spacing:.2px; }
+  .page-head p { color:var(--muted); font-size:14px; margin:0; line-height:1.55; max-width:66ch; }
+  .cardx { background:var(--panel); border:1px solid var(--border); border-radius:14px; overflow:hidden; }
+  .cardx > .h { font-size:12px; font-weight:600; letter-spacing:.4px; text-transform:uppercase; color:var(--muted);
+      padding:12px 16px; border-bottom:1px solid var(--border); background:var(--panel2);
+      display:flex; align-items:center; justify-content:space-between; }
+  .cardx > .b { padding:16px; }
+
+  /* ---- Flows gallery ---- */
+  .flow-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:16px; }
+  #recentWrap { margin-top:28px; }
+  .recent-head { display:flex; align-items:baseline; gap:12px; margin-bottom:10px; }
+  .recent-head h3 { font-size:14px; margin:0; }
+  .recent-hint { font-size:11px; color:var(--muted); }
+  .recent-list { display:flex; flex-direction:column; gap:6px; }
+  .run-row { display:flex; align-items:center; gap:12px; padding:9px 12px; border:1px solid var(--border);
+             border-radius:9px; background:#0f1622; cursor:pointer; transition:border-color .15s, background .15s; }
+  .run-row:hover { border-color:var(--accent2); background:#111a28; }
+  .run-row .rflow { font-weight:600; font-size:13px; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .run-row .rmode { font-size:11px; color:var(--muted); font-family:var(--mono,monospace); }
+  .run-row .rtime { font-size:11px; color:var(--muted); min-width:96px; text-align:right; }
+  .rbadge { font-size:10.5px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; padding:2px 8px;
+            border-radius:20px; min-width:78px; text-align:center; }
+  .rbadge.running { color:#0b1220; background:var(--ok); }
+  .rbadge.done { color:var(--ok); background:rgba(34,197,94,.14); }
+  .rbadge.blocked, .rbadge.error, .rbadge.interrupted { color:var(--fail); background:rgba(239,68,68,.14); }
+  .rbadge.queued { color:var(--warn,#d29922); background:rgba(210,153,34,.14); }
+  .navbtn { background:var(--panel2); color:var(--text); border:1px solid var(--border); border-radius:8px;
+            padding:6px 12px; font-size:12.5px; font-weight:600; cursor:pointer; width:auto; margin-top:0;
+            flex:0 0 auto; white-space:nowrap; transition:border-color .15s, background .15s; }
+  .navbtn:hover { border-color:var(--accent2); }
+  .navbtn.active { border-color:var(--ok); color:var(--ok); }
+  /* Runs page */
+  .runs-page { max-width:1000px; margin:0 auto; }
+  .runs-page .rp-head { display:flex; align-items:baseline; gap:12px; margin-bottom:16px; }
+  .runs-page .rp-head h2 { margin:0; font-size:20px; }
+  .runs-page .rp-sub { font-size:12px; color:var(--muted); }
+  .runs-table { width:100%; border-collapse:separate; border-spacing:0 6px; }
+  .runs-table th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); padding:0 12px 4px; font-weight:600; }
+  .runs-table td { background:#0f1622; border-top:1px solid var(--border); border-bottom:1px solid var(--border); padding:11px 12px; font-size:13px; }
+  .runs-table tr.rrow { cursor:pointer; }
+  .runs-table tr.rrow:hover td { background:#111a28; }
+  .runs-table td:first-child { border-left:1px solid var(--border); border-radius:9px 0 0 9px; }
+  .runs-table td:last-child { border-right:1px solid var(--border); border-radius:0 9px 9px 0; }
+  .runs-table .c-flow { font-weight:600; }
+  .runs-table .c-num { font-family:var(--mono,monospace); color:var(--muted); font-weight:700; }
+  .run-row .rnum { font-family:var(--mono,monospace); color:var(--muted); font-weight:700; font-size:12px; min-width:34px; }
+  .runs-table .c-mode { font-family:var(--mono,monospace); font-size:11.5px; color:var(--muted); }
+  .runs-empty { text-align:center; color:var(--muted); padding:48px 0; font-size:14px; }
+  .rp-open { color:var(--accent2); font-size:12px; }
+  /* Configuration picker: what the chosen Configuration already provides (those fields get hidden) */
+  .cfg-provides { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:12px;
+    padding-top:12px; border-top:1px solid var(--border); font-size:12px; color:var(--muted); }
+  .cfg-provides .lead { color:var(--text); font-weight:600; }
+  .cfg-provides .prov { display:inline-flex; align-items:center; gap:5px; background:color-mix(in srgb,var(--ok) 12%, transparent);
+    border:1px solid color-mix(in srgb,var(--ok) 40%, var(--border)); color:var(--ok); border-radius:20px; padding:3px 10px; font-weight:600; }
+  select#cfgProject { width:100%; background:var(--panel2); color:var(--text); border:1px solid var(--border);
+    border-radius:9px; padding:9px 11px; font-size:13px; font-family:inherit; cursor:pointer; }
+  /* Optional intake fields fold away so a flow shows only what it needs */
+  .opt-fold { margin-top:4px; border-top:1px dashed var(--border); padding-top:10px; }
+  .opt-fold > summary { cursor:pointer; color:var(--muted); font-size:12.5px; font-weight:600; list-style:none;
+    display:flex; align-items:center; gap:7px; user-select:none; }
+  .opt-fold > summary::before { content:'▸'; font-size:10px; transition:transform .15s; }
+  .opt-fold[open] > summary::before { transform:rotate(90deg); }
+  .opt-fold > summary:hover { color:var(--text); }
+  .opt-fold[open] > summary { margin-bottom:12px; }
+  /* Runs-row actions — single aligned, non-wrapping cluster on the right */
+  .runs-table .c-act { text-align:right; }
+  .rrow-act { display:inline-flex; align-items:center; gap:8px; white-space:nowrap; justify-content:flex-end; }
+  .open-link { color:var(--accent2); font-size:12.5px; font-weight:600; display:inline-flex; align-items:center; gap:5px; }
+  .open-link .arr { display:inline-block; transition:transform .15s ease; }
+  .runs-table tr.rrow:hover .open-link .arr { transform:translateX(3px); }
+  .cfg-btn { background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:7px;
+             padding:5px 10px; font-size:11.5px; font-weight:600; width:auto; margin-top:0; cursor:pointer; line-height:1;
+             display:inline-flex; align-items:center; gap:5px; transition:border-color .15s, color .15s; }
+  .cfg-btn:hover { border-color:var(--accent2); color:var(--text); transform:none; filter:none; }
+  .cfg-btn.on { border-color:var(--accent2); color:var(--accent2); }
+  .cfg-row td { background:#0c121c !important; border-radius:0 0 9px 9px; }
+  .cfg-grid { display:grid; grid-template-columns:120px 1fr; gap:6px 16px; font-size:12.5px; padding:4px 2px; }
+  .cfg-k { color:var(--muted); text-transform:uppercase; font-size:10.5px; letter-spacing:.4px; padding-top:1px; }
+  .cfg-v { font-family:var(--mono,monospace); word-break:break-all; }
+  /* Results quick-links (PR + Jenkins) */
+  .result-links { display:flex; gap:12px; flex-wrap:wrap; margin:2px 0 20px; }
+  .rlink { display:flex; align-items:center; gap:12px; text-decoration:none; padding:12px 16px; border-radius:11px;
+           border:1px solid var(--border); background:#0f1622; min-width:240px; transition:border-color .15s, transform .1s; }
+  .rlink:hover { border-color:var(--accent2); transform:translateY(-1px); }
+  .rlink .ic { font-size:20px; }
+  .rlink b { display:block; font-size:13.5px; color:var(--text); }
+  .rlink small { display:block; font-size:11.5px; color:var(--muted); font-family:var(--mono,monospace); margin-top:2px; }
+  .rlink.pr { border-left:3px solid var(--accent2); }
+  .rlink.ci.ok { border-left:3px solid var(--ok); }
+  .rlink.ci.bad { border-left:3px solid var(--fail); }
+  .prlink { display:inline-block; font-family:var(--mono,monospace); font-size:12px; color:var(--accent2);
+            text-decoration:none; word-break:break-all; margin-bottom:10px; }
+  .prlink:hover { text-decoration:underline; }
+  /* Security scan card */
+  .sec-cov { font-size:12.5px; color:var(--muted); margin-bottom:8px; }
+  .sec-sev { display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
+  .sec-total { font-size:11.5px; color:var(--muted); font-family:var(--mono,monospace); }
+  .sev { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; padding:2px 8px; border-radius:20px; }
+  .sev.high { color:var(--fail); background:rgba(239,68,68,.15); }
+  .sev.medium { color:var(--warn,#d29922); background:rgba(210,153,34,.15); }
+  .sev.low { color:var(--accent2,#58a6ff); background:rgba(88,166,255,.15); }
+  .sec-line { font-size:12px; color:var(--muted); margin-bottom:8px; }
+  .sec-mod { display:inline-block; font-family:var(--mono,monospace); font-size:11px; background:var(--panel2); border:1px solid var(--border); border-radius:6px; padding:1px 7px; margin:2px 4px 2px 0; }
+  .sec-mod.ok { color:var(--ok); }
+  .sec-list { list-style:none; margin:6px 0 0; padding:0; display:flex; flex-direction:column; gap:5px; }
+  .sec-list li { font-size:12px; }
+  .sec-list .m { color:var(--muted); font-family:var(--mono,monospace); font-size:11px; }
+  .sec-bad { color:var(--fail); font-size:13px; }
+  /* ===== Sources of truth panel ===== */
+  .sources-head { display:flex; align-items:baseline; gap:12px; margin:22px 0 12px; flex-wrap:wrap; }
+  .sources-head h3 { margin:0; font-size:15px; }
+  .sources { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }
+  .src-card { background:#0f1622; border:1px solid var(--border); border-radius:11px; padding:0; overflow:hidden; }
+  .src-card.jira { border-top:3px solid #58a6ff; }
+  .src-card.repo { border-top:3px solid var(--ok); }
+  .src-card.app { border-top:3px solid #d29922; }
+  .src-h { display:flex; align-items:center; gap:8px; font-size:12px; font-weight:700; padding:11px 14px 8px; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); }
+  .src-ic { font-size:15px; }
+  .src-b { padding:2px 14px 12px; display:flex; flex-direction:column; gap:6px; }
+  .src-row { display:flex; align-items:center; justify-content:space-between; gap:12px; font-size:12px; }
+  .src-row > span { color:var(--muted); }
+  .src-row > b { font-family:var(--mono,monospace); font-size:12px; text-align:right; word-break:break-all; }
+  .src-row > b.src-hi { color:var(--ok); }
+  /* ===== SDLC journey timeline (results hero) ===== */
+  .journey-head { display:flex; align-items:baseline; gap:12px; margin:26px 0 14px; flex-wrap:wrap; }
+  .journey-head h3 { margin:0; font-size:15px; }
+  .journey-sub { font-size:11.5px; color:var(--muted); }
+  .journey { position:relative; padding-left:28px; }
+  .journey::before { content:''; position:absolute; left:9px; top:8px; bottom:8px; width:2px; background:var(--border); }
+  .jstage { position:relative; margin-bottom:12px; }
+  .jdot { position:absolute; left:-23px; top:15px; width:14px; height:14px; border-radius:50%; background:var(--panel2); border:2px solid var(--border); z-index:1; }
+  .jstage.pass .jdot { background:var(--ok); border-color:var(--ok); }
+  .jstage.fail .jdot { background:var(--fail); border-color:var(--fail); }
+  .jstage.healed .jdot { background:var(--warn,#d29922); border-color:var(--warn,#d29922); }
+  .jcard { background:#0f1622; border:1px solid var(--border); border-radius:11px; padding:12px 14px; border-left:3px solid var(--border); transition:border-color .15s; }
+  .jstage.pass .jcard { border-left-color:var(--ok); }
+  .jstage.fail .jcard { border-left-color:var(--fail); }
+  .jstage.healed .jcard { border-left-color:var(--warn,#d29922); }
+  .jhead { display:flex; align-items:center; gap:9px; }
+  .jic { font-size:17px; }
+  .jhead b { font-size:13.5px; }
+  .jagent { font-size:11.5px; color:var(--muted); }
+  .jbadge { margin-left:auto; font-size:10px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; padding:2px 9px; border-radius:20px; }
+  .jbadge.pass { color:var(--ok); background:rgba(34,197,94,.14); }
+  .jbadge.fail { color:var(--fail); background:rgba(239,68,68,.14); }
+  .jbadge.healed { color:var(--warn,#d29922); background:rgba(210,153,34,.14); }
+  .jbadge.ran { color:var(--accent2,#58a6ff); background:rgba(88,166,255,.14); }
+  .jreason { font-size:12px; color:var(--muted); margin-top:7px; line-height:1.5; }
+  .jchecks { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .jcheck { font-size:10.5px; padding:2px 7px; border-radius:6px; border:1px solid var(--border); font-family:var(--mono,monospace); }
+  .jcheck.ok { color:var(--ok); border-color:rgba(34,197,94,.3); }
+  .jcheck.bad { color:var(--fail); border-color:rgba(239,68,68,.3); }
+  .jarts { margin-top:10px; }
+  .jarts-t { font-size:10px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); margin-bottom:6px; }
+  .jart { display:inline-flex; align-items:center; gap:6px; font-family:var(--mono,monospace); font-size:11.5px; background:var(--panel2); border:1px solid var(--border); border-radius:6px; padding:3px 9px; margin:0 6px 6px 0; cursor:pointer; color:var(--text); }
+  .jart:hover { border-color:var(--accent2); }
+  .jart .jx { color:var(--muted); font-size:10px; }
+  .jlink { color:var(--accent2,#58a6ff); font-size:12px; text-decoration:none; font-weight:600; }
+  .jlink:hover { text-decoration:underline; }
+  .details-fold { margin-top:24px; }
+  .details-fold > summary { cursor:pointer; color:var(--muted); font-size:12.5px; padding:8px 0; list-style:revert; }
+  .details-fold > summary:hover { color:var(--text); }
+  /* Projects config form */
+  .proj-form { margin-top:18px; background:#0f1622; border:1px solid var(--border); border-radius:12px; padding:18px; }
+  .pf-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px 16px; }
+  .pf-full { grid-column:1 / -1; }
+  .pf-sec { font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--ok); font-weight:700; margin-top:10px; border-bottom:1px solid var(--border); padding-bottom:6px; }
+  .proj-form label { display:flex; flex-direction:column; gap:5px; font-size:12px; }
+  .proj-form label > span { color:var(--muted); }
+  .proj-form input { background:#0a0d12; border:1px solid var(--border); border-radius:8px; padding:9px 11px; color:var(--text); font-size:13px; font-family:var(--mono,monospace); }
+  .proj-form input:focus { outline:none; border-color:var(--accent2); }
+  .pf-secret { color:var(--ok); font-size:10px; }
+  .pf-actions { grid-column:1 / -1; display:flex; align-items:center; gap:12px; }
+  .pf-status { font-size:12px; }
+  .pf-status.ok { color:var(--ok); } .pf-status.bad { color:var(--fail); }
+  .pf-foot { display:flex; align-items:center; gap:10px; margin-top:16px; padding-top:14px; border-top:1px solid var(--border); }
+  .proj-card { display:flex; align-items:center; gap:12px; padding:11px 14px; border:1px solid var(--border); border-radius:9px; background:#0f1622; cursor:pointer; }
+  .proj-card:hover { border-color:var(--accent2); }
+  .proj-card .pc-name { font-weight:600; flex:1; }
+  .proj-card .pc-meta { font-size:11px; color:var(--muted); font-family:var(--mono,monospace); }
+  .proj-card .pc-run { color:var(--ok); font-size:12px; font-weight:600; }
+  /* Left sidebar navigation */
+  body.has-sidebar { padding-left:216px; }
+  .sidebar { position:fixed; left:0; top:0; bottom:0; width:216px; background:#0b1017; border-right:1px solid var(--border);
+             display:none; flex-direction:column; padding:18px 12px; z-index:60; }
+  body.has-sidebar .sidebar { display:flex; }
+  .sb-brand { display:flex; align-items:center; gap:10px; font-family:var(--font-mono,monospace); font-weight:700;
+              font-size:13.5px; padding:8px 10px 16px; line-height:1.25; width:100%; text-align:left; background:transparent;
+              border:none; color:var(--text); cursor:pointer; border-radius:9px; transition:color .15s; margin:0 0 6px; }
+  .sb-brand:hover { color:var(--ok); transform:none; filter:none; }
+  .sb-brand:hover .sb-logo { text-shadow:0 0 12px rgba(34,197,94,.5); }
+  .sb-logo { color:var(--ok); font-size:17px; transition:text-shadow .15s; }
+  .sb-nav { display:flex; flex-direction:column; gap:4px; }
+  .sb-item { display:flex; align-items:center; gap:10px; width:100%; text-align:left; background:transparent; color:var(--muted);
+             border:1px solid transparent; border-radius:9px; padding:10px 12px; font-size:13.5px; font-weight:600;
+             margin-top:0; cursor:pointer; box-shadow:none; transition:background .15s, color .15s; }
+  .sb-item:hover { background:var(--panel2); color:var(--text); transform:none; filter:none; }
+  .sb-item.active { background:var(--panel2); color:var(--text); border-color:var(--border); }
+  .sb-item .ic { font-size:15px; width:18px; text-align:center; }
+  .sb-item .tag { margin-left:auto; }
+  .sb-foot { margin-top:auto; border-top:1px solid var(--border); padding:14px 10px 2px; }
+  .sb-user { font-weight:600; color:var(--text); font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sb-logout { color:var(--muted); font-size:11.5px; text-decoration:none; }
+  .sb-logout:hover { color:var(--fail); }
+  /* Home dashboard */
+  .home-hero { padding:8px 0 20px; }
+  .home-hero h2 { font-size:24px; margin:0 0 8px; }
+  .home-hero p { color:var(--muted); max-width:660px; margin:0 0 18px; line-height:1.6; }
+  .home-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:26px; }
+  .stat-card { background:#0f1622; border:1px solid var(--border); border-radius:11px; padding:15px 16px; }
+  .stat-card .v { font-size:25px; font-weight:700; font-family:var(--font-mono,monospace); }
+  .stat-card .l { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-top:3px; }
+  .home-section .recent-head { display:flex; align-items:baseline; gap:12px; margin-bottom:10px; }
+  .home-section .recent-head h3 { margin:0; font-size:14px; }
+  .flow-card { text-align:left; background:var(--panel); border:1px solid var(--border); border-radius:14px;
+      padding:18px; cursor:pointer; transition:border-color .15s ease, transform .15s ease, box-shadow .15s ease;
+      display:flex; flex-direction:column; gap:12px; box-shadow:none; color:var(--text); width:auto; }
+  .flow-card:hover { border-color:var(--cc); transform:translateY(-2px); box-shadow:0 10px 24px rgba(0,0,0,.35); }
+  .flow-card .top { display:flex; align-items:center; gap:12px; }
+  .flow-card .ic { width:42px; height:42px; border-radius:11px; display:grid; place-items:center; font-size:20px;
+      background:color-mix(in srgb, var(--cc) 16%, transparent); border:1px solid color-mix(in srgb, var(--cc) 55%, transparent); }
+  .flow-card h3 { margin:0; font-size:15px; font-family:var(--font-mono); }
+  .flow-card .scope { font-size:10.5px; color:var(--cc); text-transform:uppercase; letter-spacing:.5px; font-weight:600; }
+  .flow-card p { margin:0; font-size:12.5px; color:var(--muted); line-height:1.5; flex:1; }
+  .flow-card .chips { display:flex; flex-wrap:wrap; gap:5px; }
+  .flow-card .chips span { font-size:10px; background:var(--panel2); color:var(--muted); border:1px solid var(--border);
+      padding:2px 8px; border-radius:20px; }
+  .flow-card .go { font-size:12px; color:var(--cc); font-weight:600; display:flex; align-items:center; gap:6px; }
+
+  /* ---- Configure ---- */
+  .config-grid { display:grid; grid-template-columns:1.2fr 1fr; gap:16px; align-items:start; }
+  .config-grid label { margin-top:14px; }
+  .config-grid .b > label:first-child { margin-top:0; }
+  .flow-pill { display:flex; align-items:center; gap:11px; padding:11px; border:1px solid var(--border);
+      border-radius:10px; background:var(--panel2); margin-bottom:6px; }
+  .flow-pill .ic { width:34px; height:34px; border-radius:9px; display:grid; place-items:center; font-size:16px;
+      background:color-mix(in srgb, var(--cc,#7c8db5) 16%, transparent); border:1px solid color-mix(in srgb, var(--cc,#7c8db5) 55%, transparent); }
+  .flow-pill .t { font-size:13px; font-weight:600; font-family:var(--font-mono); }
+  .flow-pill .s { font-size:11px; color:var(--muted); }
+  .config-cta { display:flex; align-items:center; gap:12px; margin-top:20px; }
+  .config-cta #runBtn { width:auto; padding:13px 26px; font-size:14px; }
+
+  /* ---- Results dashboard ---- */
+  .verdict { display:flex; align-items:center; gap:16px; padding:20px 22px; border-radius:14px; margin-bottom:20px;
+      border:1px solid var(--border); background:linear-gradient(90deg, var(--panel), var(--panel2)); }
+  .verdict .badge { width:52px; height:52px; border-radius:13px; display:grid; place-items:center; font-size:26px; flex:0 0 auto; }
+  .verdict.ok    .badge { background:color-mix(in srgb, var(--ok) 18%, transparent);   border:1px solid var(--ok); }
+  .verdict.warn  .badge { background:color-mix(in srgb, var(--warn) 18%, transparent); border:1px solid var(--warn); }
+  .verdict.bad   .badge { background:color-mix(in srgb, var(--fail) 18%, transparent); border:1px solid var(--fail); }
+  .verdict h2 { margin:0; font-size:20px; font-family:var(--font-mono); }
+  .verdict.ok h2 { color:var(--ok); } .verdict.warn h2 { color:var(--warn); } .verdict.bad h2 { color:var(--fail); }
+  .verdict p { margin:3px 0 0; color:var(--muted); font-size:13px; }
+  .verdict .meta { margin-left:auto; text-align:right; font-size:12px; color:var(--muted); font-family:var(--mono); }
+
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:14px; margin-bottom:20px; }
+  .kpi { background:var(--panel); border:1px solid var(--border); border-radius:13px; padding:16px 18px; }
+  .kpi .v { font-size:28px; font-weight:700; font-family:var(--font-mono); line-height:1.1; }
+  .kpi .k { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-top:6px; }
+  .kpi .sub { font-size:11px; color:var(--muted); margin-top:3px; }
+  .results-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start; }
+  .results-grid .cardx.wide { grid-column:1 / -1; }
+  /* detailed gate results (confidence view) */
+  .gates-summary { font-family:var(--font-mono); font-weight:600; font-size:14px; padding:11px 13px; border-radius:9px; margin-bottom:14px; }
+  .gates-summary.ok   { color:var(--ok);   background:color-mix(in srgb,var(--ok) 13%, transparent);   border:1px solid color-mix(in srgb,var(--ok) 45%, transparent); }
+  .gates-summary.warn { color:var(--warn); background:color-mix(in srgb,var(--warn) 13%, transparent); border:1px solid color-mix(in srgb,var(--warn) 45%, transparent); }
+  .gates-summary.bad  { color:var(--fail); background:color-mix(in srgb,var(--fail) 13%, transparent); border:1px solid color-mix(in srgb,var(--fail) 45%, transparent); }
+  .gate-row { padding:11px 0; border-bottom:1px solid var(--border); }
+  .gate-row:last-child { border-bottom:none; }
+  .gate-top { display:flex; align-items:center; gap:10px; }
+  .gate-top .gname { font-family:var(--font-mono); font-weight:600; font-size:13px; }
+  .gate-top .m { margin-left:auto; color:var(--muted); font-size:11px; }
+  .checks { display:flex; flex-wrap:wrap; gap:6px; margin-top:9px; }
+  .check { font-size:11px; padding:3px 9px; border-radius:7px; border:1px solid var(--border); background:var(--panel2); display:inline-flex; gap:6px; align-items:center; }
+  .check.ok  { color:var(--ok);   border-color:color-mix(in srgb,var(--ok) 35%, var(--border)); }
+  .check.bad { color:var(--fail); border-color:color-mix(in srgb,var(--fail) 35%, var(--border)); }
+  .check .thr { color:var(--muted); }
+  .whyfail { margin-top:10px; border-top:1px dashed var(--border); padding-top:9px; }
+  .whyfail summary { cursor:pointer; color:var(--warn); font-size:11.5px; user-select:none; list-style:none; }
+  .whyfail summary::-webkit-details-marker { display:none; }
+  .whyfail summary::before { content:'▸ '; }
+  .whyfail[open] summary::before { content:'▾ '; }
+  .whyfail summary:hover { color:var(--text); }
+  .whyfail[open] summary { margin-bottom:9px; }
+  .failcases { margin:9px 0 0; padding-left:18px; color:var(--muted); font-size:11.5px; line-height:1.65; }
+  .failcases b { color:var(--text); font-family:var(--mono); }
+  .fixrow { margin-top:9px; font-size:11.5px; color:var(--muted); }
+  .fixrow b { color:var(--heal, #f778ba); }
+  .fixrow.ok { color:var(--ok); }
+
+  /* ---- Custom flow builder (drag & drop) ---- */
+  .builder-wrap { display:grid; grid-template-columns:230px 1fr; gap:14px; }
+  .palette { display:flex; flex-direction:column; gap:8px; }
+  .palette .phead { font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); margin-bottom:2px; }
+  .chip-agent { display:flex; align-items:center; gap:10px; padding:9px 11px; border:1px solid var(--border); border-radius:10px;
+     background:var(--panel2); cursor:grab; user-select:none; transition:border-color .15s, transform .1s; }
+  .chip-agent:hover { border-color:var(--cc); transform:translateX(2px); }
+  .chip-agent:active { cursor:grabbing; }
+  .chip-agent.used { opacity:.35; pointer-events:none; }
+  .chip-agent .ci { width:28px; height:28px; border-radius:8px; display:grid; place-items:center; font-size:15px;
+     background:color-mix(in srgb, var(--cc) 16%, transparent); border:1px solid color-mix(in srgb, var(--cc) 55%, transparent); }
+  .chip-agent .cl { font-size:13px; font-weight:600; }
+  .chip-agent .cs { font-size:10.5px; color:var(--muted); }
+  .builder-wrap.nopalette { grid-template-columns:1fr; }
+  .canvas-drop { position:relative; min-height:210px; border:1.5px dashed var(--border); border-radius:12px; background:#0a0d12;
+     padding:8px; transition:border-color .15s, background .15s; overflow:hidden; }
+  .canvas-drop.over { border-color:var(--ok); background:#0c1512; }
+  #previewGraph { width:100%; height:300px; display:block; }
+  #previewGraph .gnode { opacity:1; }          /* preview is static — show every node fully lit (no run-state dimming) */
+  #previewGraph .gnode .nodeBox { stroke:var(--cc); stroke-opacity:.7; }   /* uniform coloured outline per lane */
+  #previewGraph .gnode.removable .nodeBox { transition:stroke .15s, filter .15s; }
+  #previewGraph .gnode.removable:hover .nodeBox { stroke:var(--fail); stroke-width:2; filter:drop-shadow(0 0 6px rgba(239,68,68,.5)); }
+  .canvas-empty { position:absolute; inset:0; display:grid; place-items:center; color:var(--muted); font-size:13px; text-align:center; padding:24px; pointer-events:none; }
+  .canvas-nodes { display:flex; flex-wrap:wrap; gap:10px; position:relative; }
+  .cnode { display:flex; align-items:center; gap:9px; padding:9px 12px; border:1px solid var(--cc); border-radius:10px;
+     background:color-mix(in srgb, var(--cc) 13%, var(--panel)); font-size:13px; font-weight:600; }
+  .cnode .ci { font-size:15px; }
+  .cnode .x { cursor:pointer; color:var(--muted); font-size:15px; margin-left:3px; line-height:1; }
+  .cnode .x:hover { color:var(--fail); }
+  .builder-foot { display:flex; align-items:center; gap:18px; margin-top:14px; flex-wrap:wrap; }
+  label.inline { display:flex; align-items:center; gap:8px; margin:0; font-size:12px; color:var(--text); cursor:pointer; }
+  label.inline input { width:auto; }
+  .preview { flex:1; min-width:260px; font-family:var(--mono); font-size:12px; color:var(--muted); background:var(--panel2);
+     border:1px solid var(--border); border-radius:8px; padding:9px 12px; line-height:1.5; }
+  .preview b { color:var(--ok); }
+  @media (max-width:700px){ .builder-wrap { grid-template-columns:1fr; } }
+
+  /* ---- Per-flow intake (production config) ---- */
+  .flow-head { display:flex; align-items:center; gap:15px; margin-bottom:22px; }
+  .flow-head .fh-ic { width:52px; height:52px; border-radius:13px; display:grid; place-items:center; font-size:26px;
+     background:var(--panel2); border:1px solid var(--border); flex:0 0 auto; }
+  .flow-head h2 { font-family:var(--font-mono); font-size:22px; margin:0; }
+  .flow-head p { color:var(--muted); font-size:13px; margin:3px 0 0; }
+  .flow-head .ghost { margin-left:auto; align-self:center; }
+  .field { margin-bottom:15px; }
+  .field:last-child { margin-bottom:0; }
+  .field > label { display:flex; align-items:center; gap:8px; margin:0 0 5px; color:var(--text); font-weight:500; font-size:13px; }
+  .field .req { color:var(--fail); font-size:11px; font-weight:600; }
+  .field .opt { color:var(--muted); font-size:10px; border:1px solid var(--border); border-radius:10px; padding:1px 7px; font-weight:500; }
+  .field .fhelp { font-size:11px; color:var(--muted); margin-top:5px; line-height:1.5; }
+  .field.invalid input, .field.invalid textarea { border-color:var(--fail); box-shadow:0 0 0 2px color-mix(in srgb,var(--fail) 25%, transparent); }
+  .intake-error { color:var(--fail); font-size:12.5px; margin-top:14px; display:flex; align-items:center; gap:7px; }
+  .rsum-label { font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); margin-bottom:9px; }
+  .scope-chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .scope-chips span { font-size:11px; padding:3px 10px; border-radius:20px; border:1px solid var(--border); background:var(--panel2); }
+  details.adv { margin-top:18px; border-top:1px solid var(--border); padding-top:12px; }
+  details.adv summary { cursor:pointer; font-size:12px; color:var(--muted); user-select:none; }
+  details.adv[open] summary { margin-bottom:8px; }
+
+  /* ---- Agent marketplace catalog ---- */
+  .cat-group { margin-bottom:22px; }
+  .cat-title { font-size:11.5px; text-transform:uppercase; letter-spacing:.6px; color:var(--muted); margin:0 0 11px; font-weight:600; }
+  .agent-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:12px; }
+  .agent-card { display:flex; gap:11px; align-items:flex-start; background:var(--panel); border:1px solid var(--border);
+     border-radius:12px; padding:13px; transition:border-color .15s; }
+  .agent-card:hover { border-color:var(--cc); }
+  .agent-card .ai { width:36px; height:36px; border-radius:9px; display:grid; place-items:center; font-size:17px; flex:0 0 auto;
+     background:color-mix(in srgb,var(--cc) 15%, transparent); border:1px solid color-mix(in srgb,var(--cc) 50%, transparent); }
+  .agent-card .kind { font-size:9.5px; text-transform:uppercase; letter-spacing:.4px; color:var(--cc); font-weight:600; }
+  .agent-card h4 { margin:2px 0 3px; font-size:13px; font-family:var(--font-mono); }
+  .agent-card p { margin:0; font-size:11.5px; color:var(--muted); line-height:1.45; }
+  .agent-card .acat { font-size:9.5px; text-transform:uppercase; letter-spacing:.4px; color:var(--cc); font-weight:600; }
+
+  /* ---- Home: hero + how-it-works + tabs ---- */
+  .hero-home { margin-bottom:26px; }
+  .hero-home h2 { font-family:var(--font-mono); font-size:27px; line-height:1.15; margin:0 0 10px; letter-spacing:.2px; }
+  .hero-home > p { color:var(--muted); font-size:14px; line-height:1.6; margin:0 0 20px; max-width:72ch; }
+  .how { display:flex; align-items:stretch; gap:12px; flex-wrap:wrap; }
+  .how-step { display:flex; gap:11px; align-items:flex-start; background:var(--panel); border:1px solid var(--border);
+     border-radius:12px; padding:13px 15px; flex:1; min-width:220px; }
+  .how-step .n { width:24px; height:24px; border-radius:50%; background:color-mix(in srgb,var(--ok) 18%, transparent);
+     border:1px solid var(--ok); color:var(--ok); font-size:12px; font-weight:700; display:grid; place-items:center; flex:0 0 auto; }
+  .how-step b { display:block; font-size:13px; margin-bottom:2px; }
+  .how-step span { font-size:11.5px; color:var(--muted); line-height:1.45; }
+  .how-arrow { display:flex; align-items:center; color:var(--muted); font-size:18px; }
+  .home-tabs { display:flex; gap:4px; border-bottom:1px solid var(--border); margin-bottom:22px; }
+  .htab { background:transparent; color:var(--muted); border:none; border-bottom:2px solid transparent; box-shadow:none;
+     width:auto; border-radius:0; padding:10px 15px; font-size:13.5px; font-weight:600; display:flex; align-items:center; gap:8px; }
+  .htab:hover { color:var(--text); transform:none; background:transparent; }
+  .htab.active { color:var(--text); border-bottom-color:var(--ok); }
+  .market-intro { color:var(--muted); font-size:13px; margin:0 0 18px; max-width:72ch; line-height:1.55; }
+  .gh-login { display:inline-flex; align-items:center; gap:10px; background:#24292e; color:#fff; border-radius:9px;
+     padding:12px 22px; font-size:14px; font-weight:600; text-decoration:none; transition:background .15s; }
+  .gh-login:hover { background:#000; }
+  @media (max-width:700px){ .how-arrow { display:none; } }
+
+  @media (max-width:900px) {
+    .config-grid, .results-grid { grid-template-columns:1fr; }
+    .stepper { display:none; }
+  }
+</style>
+</head>
+<body>
+<aside id="sidebar" class="sidebar">
+  <button class="sb-brand" id="sbBrand" type="button" title="Home"><span class="sb-logo">◆</span><span>AI Testing<br>Marketplace</span></button>
+  <nav class="sb-nav" id="sbNav">
+    <button class="sb-item" data-view="flows"   type="button"><span class="ic">🚀</span> Playbooks</button>
+    <button class="sb-item" data-action="builder" type="button"><span class="ic">🎛️</span> Flow Builder</button>
+    <button class="sb-item" data-view="runs"    type="button"><span class="ic">🗂️</span> Runs <span class="live-dot" id="runsLive" hidden></span></button>
+    <button class="sb-item" data-view="projects" type="button"><span class="ic">⚙️</span> Configuration</button>
+    <button class="sb-item" data-view="agents"  type="button"><span class="ic">🧩</span> Agents <span class="tag" id="agentCount"></span></button>
+  </nav>
+  <div class="sb-foot">
+    <div class="sb-user" id="sbUser">not signed in</div>
+    <a href="/auth/logout" class="sb-logout" id="sbLogout" style="display:none">Sign out</a>
+  </div>
+</aside>
+<header>
+  <span class="dot" id="statusDot"></span>
+  <h1 id="viewTitle">AI Testing Marketplace</h1>
+  <span class="tag" id="ghBadge" style="margin-left:auto" title="GitHub connection">GitHub: …</span>
+  <span class="tag" id="modeTag">idle</span>
+</header>
+
+<!-- ========== VIEW 0 · LOGIN ========== -->
+<section id="loginView" class="view">
+  <div class="page" style="max-width:540px; margin-top:9vh; text-align:center">
+    <div class="cardx"><div class="b" style="padding:36px">
+      <h2 style="font-family:var(--font-mono); font-size:23px; margin:0 0 10px">AI Testing Marketplace</h2>
+      <p style="color:var(--muted); font-size:14px; line-height:1.65; margin:0 0 24px">
+        Sign in with GitHub to run agentic tests against <b>your own repositories</b> — pick a source repo,
+        generate & run suites, and publish them back as pull requests.</p>
+      <a href="/auth/github/login" class="gh-login">
+        <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        Continue with GitHub</a>
+    </div></div>
+  </div>
+</section>
+
+<!-- ========== VIEW · HOME (dashboard after login) ========== -->
+<section id="homeView" class="view">
+  <div class="page">
+    <div class="home-hero">
+      <h2 id="homeGreeting">Welcome</h2>
+      <p>Point a repository at an autonomous QA team — generate, run, and self-heal tests, then ship a green, ready-to-merge PR. Start a new test, or reopen any past run from the left.</p>
+      <button id="homeStart" type="button" style="width:auto;margin-top:0">＋ Start a new test</button>
+    </div>
+    <div class="home-stats" id="homeStats"></div>
+    <div class="home-section">
+      <div class="recent-head"><h3>Recent runs</h3><a id="homeAllRuns" class="rp-open" style="cursor:pointer">view all →</a></div>
+      <div id="homeRecent" class="recent-list"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== VIEW 1 · FLOWS ========== -->
+<section id="flowsView" class="view">
+  <div class="page">
+    <div class="hero-home">
+      <h2>Playbooks — ready-made testing flows</h2>
+      <p>Pick a playbook and bring your repository — or a Jira link — and a fleet of AI agents generate, run, and self-heal your tests, ending on a detailed, gate-by-gate results dashboard. Need a bespoke pipeline? Compose your own in <b>Flow Builder</b>.</p>
+      <div class="how">
+        <div class="how-step"><span class="n">1</span><div><b>Pick a flow · bring your repo</b><span>or paste a Jira link / acceptance criteria</span></div></div>
+        <div class="how-arrow">→</div>
+        <div class="how-step"><span class="n">2</span><div><b>Agents run &amp; self-heal</b><span>generate, execute, and fix until every gate passes</span></div></div>
+        <div class="how-arrow">→</div>
+        <div class="how-step"><span class="n">3</span><div><b>Get a results dashboard</b><span>every quality gate, with the evidence</span></div></div>
+      </div>
+    </div>
+
+    <div class="flow-grid" id="flowGrid"></div>
+  </div>
+</section>
+
+<!-- ========== VIEW · AGENTS (marketplace catalog) ========== -->
+<section id="agentsView" class="view">
+  <div class="page">
+    <div class="rp-head"><h2 style="margin:0">Agents</h2>
+      <span class="rp-sub">every capability on the platform — each a drop-in plugin</span></div>
+    <p class="market-intro">New agents are added continuously. Compose any subset in <b>Flow Builder</b>.</p>
+    <div id="agentCatalog"></div>
+  </div>
+</section>
+
+<!-- ========== VIEW 2 · CONFIGURE ========== -->
+<section id="configView" class="view">
+  <div class="page">
+    <div class="flow-head">
+      <span class="fh-ic" id="fhIc">🚀</span>
+      <div><h2 id="fhTitle">Full Pipeline</h2><p id="fhDesc"></p></div>
+      <button class="ghost" id="backFlows" type="button">← Change flow</button>
+    </div>
+    <div class="cardx" id="cfgProjectCard" style="margin-bottom:16px">
+      <div class="h">⚙️ Configuration <span class="tag">optional · saves re-typing</span></div>
+      <div class="b">
+        <div class="field" style="margin:0">
+          <label>Use a saved Configuration</label>
+          <select id="cfgProject"><option value="">None — enter details below manually</option></select>
+          <div class="fhelp">Reuses a saved Jira + app + repos + Jenkins setup, so this flow only asks for what the Configuration doesn't already provide.</div>
+        </div>
+        <div id="cfgProvides" class="cfg-provides" style="display:none"></div>
+      </div>
+    </div>
+    <div class="cardx" id="githubCard" style="display:none; margin-bottom:16px">
+      <div class="h">Repositories <span class="tag" id="ghConn">GitHub</span></div>
+      <div class="b">
+        <div class="config-grid">
+          <div class="field">
+            <label>Source repository <span class="opt">app to test</span></label>
+            <select id="sourceRepo"></select>
+            <div class="fhelp">The repo the agents clone, analyze, and generate tests for.</div>
+          </div>
+          <div class="field">
+            <label>Destination repository <span class="opt">where the PR is opened</span></label>
+            <select id="destRepo"></select>
+            <input id="newRepoName" placeholder="new-repo-name" style="display:none; margin-top:8px" />
+            <div class="fhelp">Where generated tests are committed and a PR is raised. An existing repo is scanned so the agent reuses its framework; a new one is scaffolded with a full Playwright framework.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="config-grid">
+      <div class="cardx">
+        <div class="h">Inputs</div>
+        <div class="b">
+          <div id="intakeBody"></div>
+          <div id="intakeError" class="intake-error" style="display:none"></div>
+        </div>
+      </div>
+      <div class="cardx">
+        <div class="h">Run</div>
+        <div class="b">
+          <div class="rsum-label">Agents this flow will run</div>
+          <div class="scope-chips" id="runScopeSummary"></div>
+          <div class="switch" style="margin-top:18px">
+            <input type="checkbox" id="mock" checked />
+            <label for="mock" style="margin:0">Mock mode (no API key / no cost)</label>
+          </div>
+          <div class="hint">Uncheck for real LLM reasoning via the configured provider (currently <b>Groq · gpt-oss-20b</b>, free). Repo analysis &amp; test execution are always real when the target app is reachable.</div>
+          <details class="adv">
+            <summary>Advanced</summary>
+            <label for="failGate">Demo: force a gate to fail (once)</label>
+            <select id="failGate">
+              <option value="">None — clean run</option>
+              <option value="unit">UNIT gate → loops back to Dev</option>
+              <option value="feature">QG1 gate → loops back to UI/Perf</option>
+              <option value="regression">QG2 gate → Self-Heal repairs it</option>
+              <option value="security">SEC gate → re-scan</option>
+              <option value="all">ALL gates fail once</option>
+            </select>
+          </details>
+          <input type="hidden" id="runMode" value="full" />
+        </div>
+      </div>
+    </div>
+    <div class="cardx" id="previewCard" style="margin-top:16px">
+      <div class="h">Execution preview <span class="tag" id="previewScope"></span></div>
+      <div class="b">
+        <div class="builder-wrap" id="builderWrap">
+          <div class="palette" id="paletteWrap">
+            <div class="phead">Agents — drag or click to add</div>
+            <div id="palette"></div>
+          </div>
+          <div class="canvas-drop" id="canvasDrop">
+            <div class="canvas-empty" id="canvasEmpty" style="display:none">Drag an agent here to start building your flow →<br><span style="font-size:11px">dependencies wire themselves in automatically</span></div>
+            <svg id="previewGraph" preserveAspectRatio="xMidYMid meet"></svg>
+          </div>
+        </div>
+        <div class="builder-foot">
+          <label class="inline" id="prToggleWrap" style="display:none"><input type="checkbox" id="customPR"> Open a PR when all gates pass</label>
+          <span class="hint" id="previewHint"></span>
+        </div>
+      </div>
+    </div>
+    <div class="config-cta">
+      <button id="runBtn">▶ Run pipeline</button>
+    </div>
+  </div>
+</section>
+
+<!-- ========== VIEW 3 · EXECUTION ========== -->
+<div class="layout view" id="runView">
+  <!-- LEFT: agent execution -->
+  <main class="execpane">
+    <div class="graphCard">
+      <div class="run-detail-head">
+        <div class="run-tabs" role="tablist" aria-label="Run views">
+          <button class="rtab active" data-rt="run" role="tab" type="button"><span class="rt-dot"></span> Live execution</button>
+          <button class="rtab" data-rt="results" role="tab" type="button">Results</button>
+        </div>
+        <span class="tag" id="graphStatus">waiting</span>
+      </div>
+      <div class="canvas">
+        <svg id="graph" viewBox="0 0 880 1080" preserveAspectRatio="xMidYMid meet"></svg>
+      </div>
+      <div class="legend">
+        <span><i style="background:var(--accent2)"></i>orchestrator</span>
+        <span><i style="background:#c58bff"></i>planning</span>
+        <span><i style="background:var(--accent)"></i>tool use</span>
+        <span><i style="background:var(--teal)"></i>execution</span>
+        <span><i style="background:var(--warn)"></i>evaluation</span>
+        <span><i style="background:var(--ok)"></i>response</span>
+        <span><i style="background:var(--fail)"></i>self-correct (loop back)</span>
+      </div>
+    </div>
+    <div class="card logcard">
+      <h2>Agent Core Log (reasoning trail)</h2>
+      <div class="body"><div id="log"></div></div>
+    </div>
+  </main>
+
+  <!-- RIGHT: configuration + dashboard -->
+  <aside class="rightpane">
+    <div class="grid">
+      <div class="card">
+        <h2>Acceptance Criteria <span class="tag" id="acCount"></span></h2>
+        <div class="body" id="acBody"><div class="empty">Run the pipeline to generate criteria.</div></div>
+      </div>
+      <div class="card">
+        <h2>Quality Gates</h2>
+        <div class="body" id="gateBody"><div class="empty">No gate decisions yet.</div></div>
+      </div>
+      <div class="card">
+        <h2>Test Runs</h2>
+        <div class="body" id="runBody"><div class="empty">No runs yet.</div></div>
+      </div>
+      <div class="card">
+        <h2>Artifacts <span class="tag" id="artCount"></span></h2>
+        <div class="body" id="artBody"><div class="empty">No artifacts yet. Click a file to view its code.</div></div>
+      </div>
+      <div class="card full">
+        <h2>Pull Request <span class="pill" id="prPill" style="display:none"></span></h2>
+        <div class="body" id="prBody"><div class="empty">The PR is drafted after all gates pass.</div></div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<!-- ========== VIEW 4 · RESULTS ========== -->
+<section id="resultsView" class="view">
+  <div class="page">
+    <div class="run-tabs run-tabs-top" role="tablist" aria-label="Run views">
+      <button class="rtab" data-rt="run" role="tab" type="button"><span class="rt-dot"></span> Live execution</button>
+      <button class="rtab active" data-rt="results" role="tab" type="button">Results</button>
+    </div>
+    <div class="verdict" id="verdict"></div>
+    <div class="kpis" id="kpis"></div>
+    <div class="result-links" id="resultLinks" style="display:none"></div>
+
+    <div class="sources-head" id="sourcesHead" style="display:none"><h3>Sources of truth</h3>
+      <span class="journey-sub">what this run was driven &amp; validated against — nothing assumed</span></div>
+    <div class="sources" id="sources" style="display:none"></div>
+
+    <div class="journey-head"><h3>Ticket → Production journey</h3>
+      <span class="journey-sub">each stage, the agent that ran it, its gate, and the artifacts it produced</span></div>
+    <div class="journey" id="journey"></div>
+
+    <details class="details-fold"><summary>Raw details — gates, test runs, security &amp; PR</summary>
+      <div class="results-grid">
+        <div class="cardx"><div class="h">Quality Gates</div><div class="b" id="rGates"><div class="empty">—</div></div></div>
+        <div class="cardx"><div class="h">Test Runs</div><div class="b" id="rRuns"><div class="empty">—</div></div></div>
+        <div class="cardx" id="rSecCard" style="display:none"><div class="h">Security scan</div><div class="b" id="rSecurity"><div class="empty">—</div></div></div>
+        <div class="cardx"><div class="h">Pull Request</div><div class="b" id="rPR"><div class="empty">—</div></div></div>
+      </div>
+    </details>
+    <div class="config-cta">
+      <button id="runAgain" type="button">▶ Run again</button>
+      <button class="ghost" id="toFlows" type="button">← New flow</button>
+    </div>
+  </div>
+</section>
+
+<!-- ========== VIEW · PROJECTS (per-project config: Jira + App + Repos + Jenkins) ========== -->
+<section id="projectsView" class="view">
+  <div class="page runs-page">
+    <div class="rp-head"><h2 style="margin:0">Projects</h2>
+      <span class="rp-sub">configure once — Jira, application, repos &amp; CI — reused across every run (secrets encrypted)</span>
+      <button id="projNew" type="button" style="margin-left:auto;width:auto;margin-top:0">＋ New project</button></div>
+    <div id="projList" class="recent-list"></div>
+
+    <div id="projForm" class="proj-form" style="display:none">
+      <div class="pf-grid">
+        <label class="pf-full"><span>Project name</span><input id="pf_name" placeholder="e.g. IDURAR ERP"></label>
+
+        <div class="pf-sec pf-full">Requirements source — Jira Cloud (the source of truth)</div>
+        <label><span>Jira site URL</span><input id="pf_jira_url" placeholder="https://yourteam.atlassian.net"></label>
+        <label><span>Jira account email</span><input id="pf_jira_email" placeholder="you@company.com"></label>
+        <label><span>Jira API token <span class="pf-secret" id="pf_jira_token_set"></span></span><input id="pf_jira_token" type="password" placeholder="leave blank to keep existing"></label>
+        <div class="pf-actions"><button class="ghost" id="pf_jira_test" type="button" style="width:auto;margin-top:0">Test connection</button><span id="pf_jira_status" class="pf-status"></span></div>
+
+        <div class="pf-sec pf-full">Application under test</div>
+        <label><span>App URL</span><input id="pf_app_url" placeholder="https://app.company.com"></label>
+        <label><span>Login path</span><input id="pf_login_url" placeholder="/login (blank if public)"></label>
+        <label><span>Login username / email</span><input id="pf_login_user" placeholder="test account"></label>
+        <label><span>Login password <span class="pf-secret" id="pf_login_password_set"></span></span><input id="pf_login_password" type="password" placeholder="leave blank to keep existing"></label>
+
+        <div class="pf-sec pf-full">Repositories</div>
+        <label><span>Source repo (owner/repo)</span><input id="pf_source_repo" placeholder="org/app-or-suite"></label>
+        <label><span>Destination repo (owner/repo)</span><input id="pf_dest_repo" placeholder="org/e2e-tests"></label>
+
+        <div class="pf-sec pf-full">CI · Jenkins</div>
+        <label><span>Jenkins URL</span><input id="pf_jenkins_url" placeholder="http://localhost:8081"></label>
+        <label><span>Jenkins job</span><input id="pf_jenkins_job" placeholder="ui-automation"></label>
+        <label><span>Jenkins token <span class="pf-secret" id="pf_jenkins_token_set"></span></span><input id="pf_jenkins_token" type="password" placeholder="leave blank to keep existing"></label>
+      </div>
+      <div class="pf-foot">
+        <button id="pf_save" type="button" style="width:auto;margin-top:0">Save project</button>
+        <button class="ghost" id="pf_cancel" type="button" style="width:auto;margin-top:0">Cancel</button>
+        <button class="ghost" id="pf_delete" type="button" style="width:auto;margin-top:0;margin-left:auto;color:var(--fail)">Delete</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== VIEW · RUNS (history) ========== -->
+<section id="runsView" class="view">
+  <div class="page runs-page">
+    <div class="rp-head">
+      <h2>Runs</h2>
+      <span class="rp-sub" id="runsSub">every run and its state · runs continue in the background</span>
+      <button class="ghost" id="runsNewFlow" type="button" style="margin-left:auto">＋ New run</button>
+    </div>
+    <div id="runsPage"></div>
+  </div>
+</section>
+
+<div class="modal" id="modal">
+  <div class="box">
+    <h3><span id="modalTitle"></span><span class="x" onclick="closeModal()">✕ close</span></h3>
+    <div class="mbody"><pre class="code" id="modalCode"></pre></div>
+  </div>
+</div>
+
+<script>
+const SVGNS = "http://www.w3.org/2000/svg";
+const DEFAULT_DESC = `As an accountant, I want invoice statuses to move Draft -> Sent -> Paid so that I can track billing. Creating an invoice sets status Draft. Recording a full payment sets status Paid. A customer must be selected before an invoice can be saved.`;
+const $ = id => document.getElementById(id);
+const logEl = $('log');
+
+// ---- The graph is BUILT FROM THE MANIFEST the server derives from the agent registry. ----
+// A newly-registered agent appears here automatically — no edits to this file.
+// COLUMNS = agent lanes (each with nested runner/gate children); ROUTE = backend node → display id(s).
+let COLUMNS=[], ROUTE={}, AGENT_COL={}, CHILD_SPEC={};
+
+// Scope → which agents/gates a run activates. 'full' = every track the manifest offers
+// (so new agents/tracks join full runs with no change here); the others are curated policies.
+// build:true only for "full" (generate a feature). Every test scope runs on an existing repo.
+const MODE_TRACKS = {
+  full:       {tracks:[],                       build:true,  pr:true},   // tracks filled from manifest
+  perf:       {tracks:['perf'],                 build:false, pr:false},
+  regression: {tracks:['regression'],           build:false, pr:false},
+};
+
+function applyManifest(m){
+  if(!m || !m.columns) return;
+  COLUMNS = m.columns.map(c=>({
+    id:c.id, label:c.label, cap:c.cap, icon:c.icon, color:c.color,
+    tracks:c.tracks||[], needs_build:!!c.needs_build, ship:!!c.ship, always:!!c.always,
+    children:(c.children||[]).map(ch=>({id:ch.id,label:ch.label,cap:ch.cap,icon:ch.icon,color:ch.color,kind:ch.kind}))
+  }));
+  ROUTE = Object.assign({}, m.route, {analyze_failure:[], blocked:[], analyze_repo:[]});
+  AGENT_COL={}; CHILD_SPEC={};
+  COLUMNS.forEach((col,ci)=>{ AGENT_COL[col.id]=ci; col.children.forEach(ch=>{ CHILD_SPEC[ch.id]=ch; }); });
+  MODE_TRACKS.full.tracks = [...new Set(COLUMNS.flatMap(c=>c.tracks))];   // full = all tracks the manifest offers
+  TRACKS = m.tracks || [];                                                // catalog for the Custom flow builder
+  AGENTS = m.agents || [];                                                // marketplace roster
+}
+function renderCatalog(){
+  if(!AGENTS.length || !$('agentCatalog')) return;
+  $('agentCount').textContent = AGENTS.length;
+  // one dense uniform grid; category rides on each card (single-agent categories no longer waste a row)
+  $('agentCatalog').innerHTML = `<div class="agent-grid">`
+    + AGENTS.map(a=>`<div class="agent-card" style="--cc:${a.color}"><span class="ai">${a.icon}</span>`
+        +`<div><div class="acat">${escapeHtml(a.category)} · ${escapeHtml(a.kind)}</div><h4>${escapeHtml(a.label)}</h4><p>${escapeHtml(a.produces)}</p></div></div>`).join('')
+    + `</div>`;
+}
+document.querySelectorAll('.htab').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('.htab').forEach(x=>x.classList.toggle('active', x===b));
+  $('tab-flows').style.display = b.dataset.tab==='flows'?'':'none';
+  $('tab-market').style.display = b.dataset.tab==='market'?'':'none';
+}));
+// dynamic, per-run layout — set by rebuildLayout() from the resolved config
+let VIS=[], VIX={}, CORE=0, MAXCH=1, colKids={}, CHILD_PARENT={}, CHILD_ORDER={}, ACTIVE_CHILD=new Set();
+let OX=0, W=880, H=1080;
+
+// Resolve a run config → {tracks, build, pr}. Shared by the graph and the flow builder.
+function resolveCfg(cfg){
+  cfg = cfg || {};
+  const m = MODE_TRACKS[cfg.mode] || MODE_TRACKS.full;
+  return { tracks:new Set((cfg.tracks && cfg.tracks.length) ? cfg.tracks : m.tracks),
+           build:(cfg.entry ? cfg.entry==='from_story' : m.build),
+           pr:(cfg.open_pr!=null ? cfg.open_pr : m.pr) };
+}
+// The lanes a config activates — same rule the backend AgentSpec.is_active uses.
+function activeColumns(cfg){
+  const {tracks,build,pr}=resolveCfg(cfg);
+  return COLUMNS.filter(c=> c.always ? true
+                          : c.ship ? (pr || (c.tracks||[]).some(t=>tracks.has(t)))   // PR: checkbox OR dragged as an agent
+                          : (c.needs_build && !build) ? false
+                          : (c.tracks||[]).some(t=>tracks.has(t)));
+}
+
+// Decide the active columns from the run config, then compact-lay-out only those.
+function rebuildLayout(cfg){
+  cfg = cfg || {};
+  VIS = activeColumns(cfg);                       // active columns, in canonical order
+  const on = new Set(VIS.map(c=>c.id));
+  VIX = {}; VIS.forEach((c,i)=>VIX[c.id]=i);
+  CORE = VIS.filter(c=>c.id!=='heal').length;
+
+  // runtime children per active column; perf-only hosts the QG1 gate under Perf (no UI feature run)
+  colKids = {}; VIS.forEach(c=> colKids[c.id]=c.children.map(ch=>ch.id));
+  if(on.has('perf') && !on.has('ui')) colKids['perf']=['perf_run','qg1'];
+
+  CHILD_PARENT={}; CHILD_ORDER={}; ACTIVE_CHILD=new Set();
+  VIS.forEach(c=> colKids[c.id].forEach((kid,j)=>{ CHILD_PARENT[kid]=c.id; CHILD_ORDER[kid]=j; ACTIVE_CHILD.add(kid); }));
+  MAXCH = Math.max(1, ...VIS.map(c=>colKids[c.id].length));
+
+  // Keep the canvas — and therefore node scale — constant across scopes, then centre the
+  // active columns. A scoped run reads as the same graph with fewer boxes, not a zoom-in.
+  const FULL = COLUMNS.length, MAXCHfull = Math.max(1, ...COLUMNS.map(c=>c.children.length));
+  W = XSTART + (FULL-1)*XPITCH + NODE_W/2 + XMARGIN;      // full-scope width, held constant
+  H = CHILD_TOP + (MAXCHfull-1)*CHILD_PITCH + CH/2 + 30;
+  XBASE = (W - (VIS.length-1)*XPITCH) / 2;                // horizontally centre the active block
+  OX = XBASE + (CORE-1)/2*XPITCH;                         // orchestrator over the core (non-heal) columns
+}
+// a display id is drawable only if its column (or reparented gate) is in scope
+function placeable(id){ return VIX[id]!=null || ACTIVE_CHILD.has(id); }
+
+// ROUTE (backend node → display id[s]) is filled from the manifest in applyManifest().
+// self-correction loop-backs (display ids): a failed gate loops back to its responsible agent(s)
+const RETRY = { unit_gate:['dev'], qg1:['ui','perf'], qg2:['reg'] };
+
+const NODE_W=150, NODE_H=58;                  // agent card (layer 2)
+const CW=140, CH=44;                          // execution card (layer 3)
+const XMARGIN=54, XPITCH=170;
+const START_Y=22, ORCH_Y=92, ORW=300, ORH=64;
+const ROW_Y=210;                             // agent-layer centre-y
+const CHILD_TOP=ROW_Y+NODE_H/2+38, CHILD_PITCH=56;  // first child centre + stacking pitch
+const XSTART=XMARGIN+NODE_W/2;
+let XBASE=XSTART;                             // left origin of the active column block (re-centred per scope)
+const NX=(i)=>XBASE+i*XPITCH;                // column (agent) centre-x
+// OX / W / H are dynamic (set by rebuildLayout from the active scope)
+
+let nodes={}, edgeEls={}, order=[], frontier=[], hub=null;
+let edgeLayer=null, nodeLayer=null, ended=false, sawThink=false;
+
+function log(node,msg){ const t=new Date().toLocaleTimeString();
+  logEl.innerHTML+=`<div><span class="t">${t}</span> ${node?`<span class="n">[${node}]</span> `:''}${msg}</div>`; logEl.scrollTop=logEl.scrollHeight; }
+function escapeHtml(s){ return (s??'').toString().replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function el(tag,attrs,parent){ const e=document.createElementNS(SVGNS,tag); for(const k in attrs)e.setAttribute(k,attrs[k]); if(parent)parent.appendChild(e); return e; }
+
+function followX(x){ /* whole star fits the canvas — nothing to scroll */ }
+// greedy 2-line label wrap for the compact row cards
+function wrap2(label,maxChars){
+  const words=(label||'').split(' '); const lines=[''];
+  for(const w of words){ const cur=lines[lines.length-1]; const t=cur?cur+' '+w:w;
+    if(t.length>maxChars && cur) lines.push(w); else lines[lines.length-1]=t; }
+  const out=lines.slice(0,2); if(lines.length>2) out[1]=(out[1]||'')+'…';
+  return out;
+}
+
+// Layer 1: Start + the orchestrator head, centred. Agents (layer 2) attach at runtime.
+function buildStart(cfg, svgId){
+  rebuildLayout(cfg);                 // only the in-scope agents/gates get a slot
+  const svg=$(svgId||'graph');
+  [...svg.querySelectorAll('g,path,circle,text,rect')].forEach(n=>n.remove());
+  nodes={}; edgeEls={}; order=[]; frontier=[]; ended=false; sawThink=false;
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+  edgeLayer=el('g',{},svg); nodeLayer=el('g',{},svg);
+
+  // left-gutter layer labels
+  el('text',{class:'layerLabel', transform:`translate(15,${ORCH_Y}) rotate(-90)`, 'text-anchor':'middle'},nodeLayer).textContent='ORCHESTRATOR';
+  el('text',{class:'layerLabel', transform:`translate(15,${ROW_Y}) rotate(-90)`, 'text-anchor':'middle'},nodeLayer).textContent='AGENTS';
+  el('text',{class:'layerLabel', transform:`translate(15,${CHILD_TOP+CHILD_PITCH/2}) rotate(-90)`, 'text-anchor':'middle'},nodeLayer).textContent='EXECUTION';
+
+  // Start pill above the orchestrator
+  const st=el('g',{class:'term start', transform:`translate(${OX},${START_Y})`},nodeLayer);
+  el('rect',{class:'termBox', x:-46, y:-14, width:92, height:28, rx:14},st);
+  el('text',{class:'termTxt', x:0, y:4, 'text-anchor':'middle'},st).textContent='Start';
+  el('path',{class:'edge done', d:`M${OX},${START_Y+14} L${OX},${ORCH_Y-ORH/2}`},edgeLayer);
+
+  // Layer 1: orchestrator = the dynamic head that dispatches agents
+  hub=el('g',{class:'orch', transform:`translate(${OX},${ORCH_Y})`},nodeLayer);
+  el('rect',{class:'orchBox', x:-ORW/2, y:-ORH/2, width:ORW, height:ORH, rx:14},hub);
+  el('rect',{class:'iconChip', x:-ORW/2+12, y:-20, width:40, height:40, rx:10, fill:'rgba(163,113,247,.18)', stroke:'#a371f7', 'stroke-width':1.2},hub);
+  el('text',{class:'orchIcon', x:-ORW/2+32, y:7, 'text-anchor':'middle'},hub).textContent='🧠';
+  el('circle',{class:'orchDot', cx:ORW/2-16, cy:-ORH/2+15, r:5},hub);
+  el('text',{class:'orchTitle', x:-ORW/2+64, y:-10},hub).textContent='AGENT CORE';
+  el('text',{class:'orchSub', x:-ORW/2+64, y:7},hub).textContent='Orchestrator · dispatches agents at runtime';
+  const th=el('text',{class:'orchThought', x:-ORW/2+64, y:24},hub); hub._thought=th;
+}
+
+// Dispatch to the right layer by display id: layer-2 agent or layer-3 execution.
+function placeNode(id){
+  if(nodes[id]) return nodes[id];
+  return (id in CHILD_SPEC) ? placeChild(id) : placeAgent(id);
+}
+
+// Layer 2: an agent in its column + a fan-out dispatch edge from the orchestrator.
+function placeAgent(id){
+  const col=COLUMNS[AGENT_COL[id]], ci=VIX[id], x=NX(ci), y=ROW_Y;
+  const oy=ORCH_Y+ORH/2, ny=y-NODE_H/2, my=(oy+ny)/2;
+  edgeEls[id]=el('path',{class:'edge', d:`M${OX},${oy} C${OX},${my} ${x},${my} ${x},${ny}`},edgeLayer);
+
+  const g=el('g',{class:'gnode enter agent', transform:`translate(${x},${y})`, style:`--cc:${col.color}`},nodeLayer);
+  el('rect',{class:'nodeBox', x:-NODE_W/2, y:-NODE_H/2, width:NODE_W, height:NODE_H, rx:12},g);
+  el('circle',{class:'port', cx:0, cy:-NODE_H/2, r:4.5},g);
+  if(col.children.length) el('circle',{class:'port', cx:0, cy:NODE_H/2, r:4.5},g);
+  el('rect',{class:'iconChip', x:-NODE_W/2+9, y:-17, width:34, height:34, rx:9, fill:col.color, 'fill-opacity':.16, stroke:col.color, 'stroke-width':1.2, 'stroke-opacity':.55},g);
+  el('text',{class:'nicon', x:-NODE_W/2+26, y:6, 'text-anchor':'middle'},g).textContent=col.icon;
+  el('text',{class:'ncap', x:-NODE_W/2+50, y:-7},g).textContent=col.cap;
+  el('text',{class:'nlabel', x:-NODE_W/2+50, y:9},g).textContent=col.label;
+  const stt=el('text',{class:'nstatus', x:-NODE_W/2+50, y:22},g);
+  el('circle',{class:'stepnum-bg', cx:NODE_W/2-14, cy:-NODE_H/2+13, r:9},g);
+  el('text',{class:'stepnum', x:NODE_W/2-14, y:-NODE_H/2+16.3, 'text-anchor':'middle'},g).textContent=ci+1;
+  const ab=el('text',{class:'attempt', x:NODE_W/2-14, y:NODE_H/2-8, 'text-anchor':'middle'},g);
+
+  const node={g, x, y, _status:stt, _attempt:ab};
+  nodes[id]=node; order.push(id);
+  return node;
+}
+
+// Layer 3: an execution step (runner/gate) stacked under its parent agent.
+function placeChild(id){
+  const c=CHILD_SPEC[id], parentId=CHILD_PARENT[id], ci=VIX[parentId], x=NX(ci);
+  const kids=colKids[parentId]||[], j=CHILD_ORDER[id], y=CHILD_TOP+j*CHILD_PITCH;
+  const y1=(j===0 ? (nodes[parentId]?nodes[parentId].y+NODE_H/2:ROW_Y+NODE_H/2) : CHILD_TOP+(j-1)*CHILD_PITCH+CH/2), y2=y-CH/2, mid=(y1+y2)/2;
+  edgeEls[id]=el('path',{class:'edge', d:`M${x},${y1} C${x},${mid} ${x},${mid} ${x},${y2}`},edgeLayer);
+
+  const g=el('g',{class:'gnode enter child', transform:`translate(${x},${y})`, style:`--cc:${c.color}`},nodeLayer);
+  el('rect',{class:'nodeBox', x:-CW/2, y:-CH/2, width:CW, height:CH, rx:10},g);
+  el('circle',{class:'port', cx:0, cy:-CH/2, r:4},g);
+  if(kids.length-1>j) el('circle',{class:'port', cx:0, cy:CH/2, r:4},g);
+  el('rect',{class:'iconChip', x:-CW/2+8, y:-13, width:26, height:26, rx:7, fill:c.color, 'fill-opacity':.16, stroke:c.color, 'stroke-width':1, 'stroke-opacity':.5},g);
+  el('text',{class:'cicon', x:-CW/2+20, y:5, 'text-anchor':'middle'},g).textContent=c.icon;
+  el('text',{class:'clabel', x:-CW/2+38, y:-1},g).textContent=(c.kind==='gate'?'◇ '+c.label:c.label);
+  const stt=el('text',{class:'nstatus', x:-CW/2+38, y:12},g);
+  const ab=el('text',{class:'attempt', x:CW/2-11, y:CH/2-6, 'text-anchor':'middle'},g);
+
+  const node={g, x, y, _status:stt, _attempt:ab};
+  nodes[id]=node; order.push(id);
+  return node;
+}
+
+// orchestrator concludes the run (no separate terminal node in the star layout)
+function orchDone(kind){
+  if(ended) return; ended=true; if(!hub) return;
+  hub.classList.remove('thinking'); hub.classList.add(kind==='success'?'done':'fail');
+  hub._thought.textContent = kind==='success' ? 'goal complete ✓' : 'blocked · human review';
+}
+
+function clearEdges(){ Object.values(edgeEls).forEach(e=>e.classList.remove('flowing')); }
+function flow(name){ edgeEls[name]?.classList.add('flowing'); }
+
+// Settle the previously-active display nodes (a set — UI+Perf run in parallel) to done/fail.
+function finalizeFrontier(){
+  frontier.forEach(f=>{
+    const nd=nodes[f.id];
+    if(nd){ nd.g.classList.remove('active','enter'); nd.g.classList.add(f.failed?'fail':'done'); }
+    edgeEls[f.id]?.classList.remove('flowing'); edgeEls[f.id]?.classList.add(f.failed?'faildone':'done');
+    if(f.failed && RETRY[f.id] && nd){           // Choice failed → loop back up the column to its agent(s)
+      RETRY[f.id].forEach(tid=>{
+        const tn=nodes[tid]; if(!tn) return;
+        const lx=nd.x-CW/2, off=30;
+        let arc=edgeEls['retry:'+f.id+':'+tid];
+        if(!arc){ arc=el('path',{class:'edge retry', d:`M${lx},${nd.y} C${lx-off},${nd.y} ${lx-off},${tn.y} ${tn.x-NODE_W/2},${tn.y}`},edgeLayer); edgeEls['retry:'+f.id+':'+tid]=arc; }
+        arc.classList.add('flowing');
+        const n=(parseInt((tn._attempt.textContent||'').replace('×',''))||1)+1; tn._attempt.textContent='×'+n;
+      });
+    }
+  });
+  frontier=[];
+}
+
+function hubThink(t,thinking){ if(!hub)return;
+  // the node is narrow — truncate to fit its box; the full reasoning lives in the log.
+  const MAX=38; let s=(t||'').replace(/\s+/g,' ').trim(); if(s.length>MAX) s=s.slice(0,MAX-1)+'…';
+  hub._thought.textContent=s; hub.classList.toggle('thinking',!!thinking); }
+
+// ---- card renderers ----
+let allArtifacts=[];
+function renderAC(ac){ const c=ac.criteria||[]; $('acCount').textContent=c.length+' criteria';
+  $('acBody').innerHTML=c.map(x=>`<div class="ac"><span class="id">${x.id}</span><span class="pri">${x.priority}</span><pre>${escapeHtml(x.gherkin)}</pre>${(x.tags||[]).map(t=>`<span class="chip">${t}</span>`).join('')}</div>`).join(''); }
+function renderGates(g){ $('gateBody').innerHTML=g.map(x=>`<div class="gate"><span class="gname">${x.gate}</span><span class="pill ${x.verdict}">${x.verdict.toUpperCase()}</span><span class="reason">${escapeHtml(x.reason)}${x.attempt>1?` · attempt ${x.attempt}`:''}</span></div>`).join(''); }
+function renderRuns(runs){ $('runBody').innerHTML=runs.map(r=>{const total=r.passed+r.failed,ok=r.failed===0,perf=r.perf?` · p95 ${r.perf.p95_ms}ms · err ${(r.perf.error_rate*100).toFixed(1)}%`:'';return `<div class="run"><span><b>${r.suite}</b> <span class="m">${r.run_id}</span></span><span class="rate" style="color:${ok?'var(--ok)':'var(--fail)'}">${r.passed}/${total} passed ${perf?`<span class="m">${perf}</span>`:''}</span></div>`;}).join(''); }
+function renderArtifacts(){ if(!allArtifacts.length){$('artBody').innerHTML='<div class="empty">No artifacts yet.</div>';return;} $('artCount').textContent=allArtifacts.length+' files';
+  $('artBody').innerHTML=allArtifacts.map(a=>{const name=a.path.split('/').pop();return `<div class="artifact"><span class="fn" onclick='viewArtifact(${JSON.stringify(a.path)})'>${name}</span><span class="ty">${a.type||a.description||''}</span></div>`;}).join(''); }
+function renderPR(pr){ $('prPill').style.display='inline-block'; $('prPill').className='pill pass'; $('prPill').textContent='DRAFTED';
+  $('prBody').innerHTML=`<div style="font-weight:700;margin-bottom:4px">${escapeHtml(pr.title)}</div><div class="m" style="color:var(--muted);font-size:12px;margin-bottom:10px">${escapeHtml(pr.url)}</div><div class="prbody">${escapeHtml(pr.body)}</div>`; }
+
+async function viewArtifact(path){ $('modalTitle').textContent=path.split('/').pop(); $('modalCode').textContent='Loading…'; $('modal').classList.add('show');
+  try{const r=await fetch('/api/artifact?path='+encodeURIComponent(path));const d=await r.json();$('modalCode').textContent=d.content||JSON.stringify(d);}catch(e){$('modalCode').textContent='Could not load file: '+e;} }
+function closeModal(){ $('modal').classList.remove('show'); }
+
+function resetUI(){ ['acBody','gateBody','runBody','artBody'].forEach(id=>$(id).innerHTML='<div class="empty">…</div>');
+  $('prBody').innerHTML='<div class="empty">Pending all gates…</div>'; $('prPill').style.display='none';
+  $('acCount').textContent=''; $('artCount').textContent=''; logEl.innerHTML=''; allArtifacts=[]; }
+
+// ---- dynamic dispatch: the orchestrator attaches & runs one state per event ----
+// per display-node status extractor — pure (returns {text, failed?})
+function lastRun(u,suite){ const rr=u.run_results||[]; for(let i=rr.length-1;i>=0;i--){ if(rr[i].suite===suite){ const r=rr[i]; return {text:`${r.passed}/${r.passed+r.failed} pass`}; } } return {}; }
+function perfStat(u,suite){ const rr=u.run_results||[]; for(let i=rr.length-1;i>=0;i--){ if(rr[i].suite===suite && rr[i].perf){ const p=rr[i].perf; return {text:`p95 ${p.p95_ms}ms · ${(p.error_rate*100).toFixed(1)}%`}; } } return {}; }
+function gateStat(u,name){ const gd=u.gate_decisions||[]; for(let i=gd.length-1;i>=0;i--){ if(gd[i].gate===name){ const g=gd[i]; return {text:g.verdict.toUpperCase(), failed:g.verdict==='fail', route:g.route_to}; } } return {}; }
+function nfilt(arr,type){ return (arr||[]).filter(a=>a.type===type).length; }
+const STAT = {
+  ac:       u=> u.acceptance_criteria ? {text:u.acceptance_criteria.criteria.length+' criteria'} : {},
+  dev:      u=> u.code_artifacts ? {text:u.code_artifacts.length+' files'} : {},
+  unit_run: u=> lastRun(u,'unit'),
+  unit_gate:u=> gateStat(u,'UNIT'),
+  ui:       u=> ({text: nfilt(u.test_artifacts,'playwright')+' specs'}),
+  perf:     u=> ({text: nfilt(u.test_artifacts,'k6')+' k6 scripts'}),
+  feat_run: u=> lastRun(u,'feature'),
+  perf_run: u=> perfStat(u,'feature'),
+  qg1:      u=> gateStat(u,'QG1'),
+  reg:      u=> u.regression_tags ? {text:u.regression_tags.join(' ')} : {},
+  reg_run:  u=> lastRun(u,'regression'),
+  qg2:      u=> gateStat(u,'QG2'),
+  heal:     u=> { const n=(u.heal_notes||[]).slice(-1)[0]; return n ? {text:`repaired ${n.healed.length} case(s)`} : {text:'repairing…'}; },
+  pr:       u=> u.pr ? {text:'drafted'} : {},
+};
+
+function stepNode(d){
+  const u=d.update||{}, kind=d.kind;
+
+  // terminal: max retries reached → human review
+  if(u.status==='blocked' || d.node==='blocked'){
+    clearEdges(); finalizeFrontier(); orchDone('blocked');
+    hubThink('max retries → blocked for human', false);
+    log(d.node,'<b style="color:var(--fail)">⛔ blocked — human review needed</b>');
+    return;
+  }
+
+  // update the detail cards below from the raw update (once per event)
+  if(u.acceptance_criteria) renderAC(u.acceptance_criteria);
+  const _pushArts = list => { (list||[]).forEach(a=>{ if(a && a.path && !allArtifacts.find(x=>x.path===a.path)) allArtifacts.push(a); }); renderArtifacts(); };
+  if(u.code_artifacts) _pushArts(u.code_artifacts);
+  if(u.test_artifacts) _pushArts(u.test_artifacts);
+  if(u.security_artifacts) _pushArts(u.security_artifacts);   // SAST report + plan
+  if(u.functional_artifacts) _pushArts(u.functional_artifacts); // functional test-case doc
+  if(u.unit_artifacts) _pushArts(u.unit_artifacts);          // unit test report
+  if(u.a11y_artifacts) _pushArts(u.a11y_artifacts);
+  if(u.contract_artifacts) _pushArts(u.contract_artifacts);
+  if(u.run_results) renderRuns(u.run_results);
+  if(u.gate_decisions) renderGates(u.gate_decisions);
+  if(u.pr) renderPR(u.pr);
+
+  clearEdges();
+  finalizeFrontier();                          // settle the previously-active nodes
+
+  const ids = (ROUTE[d.node] || []).filter(placeable);   // one backend node → 1+ display nodes, in-scope only
+  let anyFail=false, decision='';
+  ids.forEach(id=>{
+    const nd=placeNode(id);                     // create on first run, reuse on retry
+    nd.g.classList.remove('done','fail'); nd.g.classList.add('active');
+    flow(id); followX(nd.x);
+    const s=STAT[id]?STAT[id](u):{}; nd._status.textContent=s.text||'';
+    if(s.failed){ anyFail=true; decision=`gate FAILED → loop back to ${(RETRY[id]||['agent']).join(' + ')}`; }
+    frontier.push({id, failed:!!s.failed});
+  });
+
+  // In agentic mode the orchestrator's own reasoning (think event) owns the thought line.
+  if(!sawThink){
+    const isGate = ids.some(id=>CHILD_SPEC[id]?.kind==='gate');
+    if(isGate){ hubThink(anyFail?decision:'gate passed → proceed', true); }
+    else if(u.pr){ hubThink('all gates passed → open PR', true); }
+    else { hubThink(`dispatching ${d.label}…`, true); }
+  }
+  log(d.node,`<b>${escapeHtml(d.label)}</b> — ${escapeHtml(ids.map(i=>nodes[i]?._status.textContent).filter(Boolean).join(' · ')||'…')}`);
+}
+
+// ============ Application navigation: Flows → Configure → Execution → Results ============
+const VIEW_DISPLAY = {login:'block', home:'block', flows:'block', config:'block', run:'grid', results:'block', runs:'block', agents:'block', projects:'block'};
+const VIEW_TITLE = {login:'AI Testing Marketplace', home:'Home', flows:'Playbooks', config:'Configure', run:'Execution', results:'Results', runs:'Runs', agents:'Agents', projects:'Configuration'};
+const ALL_VIEWS = ['login','home','flows','config','run','results','runs','agents','projects'];
+let CURRENT='home', reached={home:true};
+function setStep(){
+  const custom = !!(SELECTED && SELECTED.custom);
+  document.querySelectorAll('.sb-item').forEach(b=>{
+    const v=b.dataset.view; let on=false;
+    if(b.dataset.action==='builder')      on = (CURRENT==='config' && custom);           // Flow Builder = customizable flow
+    else if(v==='flows')                  on = (CURRENT==='flows') || (CURRENT==='config' && !custom); // Playbooks incl. its Configure step
+    else if(v==='runs')                   on = (CURRENT==='runs'||CURRENT==='run'||CURRENT==='results'); // a run's graph + results
+    else                                  on = (v===CURRENT);
+    b.classList.toggle('active', on);
+  });
+  const vt=$('viewTitle');
+  if(vt) vt.textContent = (CURRENT==='config' && custom) ? 'Flow Builder' : (VIEW_TITLE[CURRENT] || 'AI Testing Marketplace');
+}
+function showView(name){
+  ALL_VIEWS.forEach(v=>{ const el=$(v+'View'); if(el) el.style.display='none'; });
+  const t=$(name+'View'); if(t) t.style.display=VIEW_DISPLAY[name];
+  CURRENT=name; reached[name]=true; setStep(); syncRunTabs(); window.scrollTo(0,0);
+  if(name==='runs') startRunsPolling(); else stopRunsPolling();
+  if(name==='home') refreshRuns();
+  if(name==='config') loadCfgProjects();
+  if(name==='projects') loadProjects();
+}
+document.querySelectorAll('.sb-item').forEach(b=>
+  b.addEventListener('click',()=>{ if(b.dataset.action==='builder') openBuilder(); else showView(b.dataset.view); }));
+$('sbBrand').addEventListener('click', ()=> showView('home'));
+// Flow Builder = the customizable flow (drag agents onto the canvas) opened straight into Configure.
+function openBuilder(){ const cf=FLOWS.find(f=>f.custom); if(cf) selectFlow(cf); else showView('config'); }
+
+// ============ Predefined flows ============
+const FLOWS=[
+  {id:'full', t:'Full Pipeline', ic:'🚀', cc:'#22C55E', mode:'full', scope:'build a feature → PR',
+   p:'The build flow: story → criteria → code → unit, functional, perf, regression, security → open a PR.',
+   chips:['AC','Dev','Unit','UI','Perf','Regression','Security','PR']},
+  {id:'functional', t:'Functional (Jira → Cases → Automation)', ic:'🎭', cc:'#58a6ff', mode:'custom', tracks:['criteria','functional','delivery','jenkins'], scope:'requirements → production',
+   p:'From the source of truth: parse acceptance criteria (Jira) → derive functional test cases → automate each case (grounded in the real app) → PR → Jenkins → self-heal until GREEN.',
+   chips:['Acceptance Criteria','Functional Cases','Playwright Agent','PR','Jenkins CI']},
+  {id:'perf', t:'Performance', ic:'⚡', cc:'#3fb0c9', mode:'perf', scope:'on an existing repo',
+   p:'Run the performance agent independently on a repo — k6 load test, p95 / error-rate thresholds.',
+   chips:['Performance','k6 Runner','QG1']},
+  {id:'security', t:'Security Audit', ic:'🛡️', cc:'#e3b341', mode:'custom', tracks:['security'], scope:'on an existing repo',
+   p:'Run the security agent independently — author a SAST ruleset, scan the repo, gate on findings.',
+   chips:['Security','SAST Runner','SEC Gate']},
+  {id:'regression', t:'Regression', ic:'🧭', cc:'#c58bff', mode:'custom', tracks:['regression','delivery','jenkins'], scope:'on an existing repo',
+   p:'Pick the impacted cases → run them in Jenkins → self-heal any failures and re-run Jenkins until everything passes → raise a PR for the changes, ready to merge.',
+   chips:['Regression','Jenkins CI','Self-Heal','PR']},
+  {id:'unit', t:'Unit Tests', ic:'🧪', cc:'#8b5cf6', mode:'custom', tracks:['unit'], scope:'on an existing repo',
+   p:'Run the Unit Test agent alone on a repo — execute the unit suite and gate on the results.',
+   chips:['Unit Tests','UNIT Gate']},
+  {id:'coverage', t:'Go Code Coverage', ic:'📈', cc:'#39c5cf', mode:'custom', tracks:['coverage'], scope:'on an existing Go repo',
+   p:'Run the repo’s own Go tests with -coverprofile → total / per-file / per-function coverage, the uncovered functions, LCOV + Cobertura exports, and a threshold gate.',
+   chips:['go test -cover','LCOV','Cobertura','COVERAGE Gate']},
+  {id:'custom', t:'Custom', ic:'⚙️', cc:'#7c8db5', mode:'custom', custom:true, scope:'compose your own',
+   p:'Drag agents onto the canvas to build a flow. Test a repo, or switch on “build from a story”.', chips:['Build it yourself']},
+];
+let SELECTED=FLOWS[0];
+function renderFlows(){
+  // Playbooks = ready-made flows only; the customizable one lives under "Flow Builder".
+  $('flowGrid').innerHTML = FLOWS.filter(f=>!f.custom).map(f=>`
+    <button class="flow-card" style="--cc:${f.cc}" data-flow="${f.id}" type="button">
+      <div class="top"><span class="ic">${f.ic}</span>
+        <div><h3>${f.t}</h3><div class="scope">${f.scope}</div></div></div>
+      <p>${f.p}</p>
+      <div class="chips">${f.chips.map(c=>`<span>${c}</span>`).join('')}</div>
+      <div class="go">Configure →</div></button>`).join('');
+  document.querySelectorAll('#flowGrid .flow-card').forEach(b=>
+    b.addEventListener('click',()=> selectFlow(FLOWS.find(x=>x.id===b.dataset.flow))));
+}
+function selectFlow(f){
+  SELECTED=f; $('runMode').value=f.mode;
+  $('fhIc').textContent=f.ic; $('fhTitle').textContent=f.t; $('fhDesc').textContent=f.p;
+  customTracks.clear(); (f.tracks||[]).forEach(t=>customTracks.add(t));   // seed the canvas from the flow
+  intakeValues={};                                                        // fresh inputs per flow
+  refreshConfig();
+  showView('config');
+}
+
+// ---- Per-flow intake: each flow asks for exactly what its agents need ----
+const FIELD=(id,label,type,required,placeholder,help)=>({id,label,type,required,placeholder,help});
+const F_REPO=FIELD('repo','Target repository','text',true,'https://github.com/org/repo  (or git URL)','The repo the agents clone, study, and test against.');
+const F_AC=FIELD('ac_source','Acceptance criteria  ·  or Jira link','textarea',true,'Paste acceptance criteria, or a Jira link like PROJ-123 to extract them','The Acceptance Criteria agent parses this and the whole flow is designed around it.');
+const F_SCOPE=FIELD('scope_prompt','What to cover','textarea',false,'e.g. "from login through to checkout" — leave blank to cover the whole app','Tell the agent which user journeys / areas to generate for.');
+// Per-repo login config — so any app (not just the ERP demo) works. Leave blank for public apps.
+const F_LOGIN_URL=FIELD('login_url','Login path (optional)','text',false,'/login — blank if the app has no login','Where the app’s login form lives. Blank = the agent won’t log in.');
+const F_LOGIN_USER=FIELD('login_user','Login username / email (optional)','text',false,'user@example.com','Credentials the agent uses to sign in before testing this app.');
+const F_LOGIN_PASS=FIELD('login_password','Login password (optional)','password',false,'••••••••','Used only to drive the login during the run (kept in the run config).');
+const FLOW_INTAKE={   // keyed by flow id
+  full:{fields:[F_AC, FIELD('repo','Target repository','text',false,'https://github.com/org/repo','Where the Dev agent implements the feature and opens the PR.')]},
+  functional:{fields:[FIELD('ac_source','Jira ticket / acceptance criteria','textarea',true,'Paste a Jira link (PROJ-123) or the acceptance criteria — the source of truth the cases are derived from','The Acceptance Criteria agent parses this; the Functional Case agent derives cases from it.'), F_REPO, F_SCOPE, FIELD('base_url','App URL','text',false,'https://staging.yourapp.com','The running app the automation grounds against and executes.'), F_LOGIN_URL, F_LOGIN_USER, F_LOGIN_PASS]},
+  perf:{fields:[F_REPO,
+    FIELD('base_url','API base URL (deployed)','text',false,'https://api.yourapp.com','Deployed host the k6 load test hits — point it at your AWS/GCP ingress, not localhost.'),
+    FIELD('load','Target load','text',false,'80 rps  (open-model arrival rate)','Offered requests/sec — arrival-rate so the server can’t throttle the test.'),
+    FIELD('perf_type','Test type','text',false,'load | stress | soak | spike | breakpoint','Which workload to generate; blank = load. Use breakpoint to find per-pod capacity.'),
+    FIELD('k8s_namespace','K8s namespace  ·  for per-pod CPU/mem','text',false,'production','Namespace of the deployed pods to sample while the load runs.'),
+    FIELD('k8s_selector','Pod label selector','text',false,'app=idurar-api','Which pod(s) to sample CPU/mem/restarts for (kubectl -l). Blank = skip per-pod metrics.'),
+    FIELD('k8s_kubeconfig','Kubeconfig path (optional)','text',false,'/path/to/kubeconfig  — or set KUBECONFIG','Cluster access for kubectl top (read-only). Blank uses the KUBECONFIG env.'),
+    FIELD('k8s_context','Kube context (optional)','text',false,'my-eks-cluster','kubectl context to use, if your kubeconfig has several.')]},
+  security:{fields:[F_REPO, FIELD('scope_prompt','What to scan','textarea',false,'e.g. "auth & payment modules" — blank = whole repo','Areas for the SAST scan to focus on.')]},
+  regression:{fields:[FIELD('repo','Regression suite repository','text',true,'https://github.com/org/regression-tests','Your existing regression automation code — runs in Jenkins.'), FIELD('base_url','App URL','text',false,'https://staging.yourapp.com','Where the regression cases execute against.'), FIELD('tags','Suites / tags to run','text',false,'@smoke @invoice — blank runs everything','Scope the (possibly hundreds of) cases; Jenkins runs them and self-heal loops until green.'), F_LOGIN_URL, F_LOGIN_USER, F_LOGIN_PASS]},
+  coverage:{fields:[F_REPO,
+    FIELD('min_coverage','Minimum coverage %','text',false,'70','Statement-coverage floor for the COVERAGE gate (policy default 70%).'),
+    FIELD('coverage_blocking','Block below threshold? (yes/no)','text',false,'no','Advisory by default (observe-first); yes = the gate FAILS below the threshold.')]},
+  unit:{fields:[F_REPO, FIELD('test_cmd','Unit test command (optional)','text',false,'npm test — blank = auto-detect','How the Unit Test agent runs the suite in the repo.')]},
+};
+let intakeValues={};
+// ---- Saved Configuration picker: a chosen config supplies repo/app/login/Jira, so the flow hides them ----
+let cfgProjects=[], activeProject=null;
+function loadCfgProjects(){
+  fetch('/api/projects').then(r=>r.json()).then(d=>{
+    cfgProjects = (d.projects||[]).slice().sort((a,b)=>(b.updated_at||0)-(a.updated_at||0));  // most recent first
+    const sel=$('cfgProject'); if(!sel) return;
+    sel.innerHTML = '<option value="">None — enter details below manually</option>'
+      + cfgProjects.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+    // Default to the last-used Configuration (or the most recent one first time) so flows only ask for
+    // what the Configuration doesn't already provide. An explicit "None" choice is remembered too.
+    let stored=null; try{ stored=localStorage.getItem('atm_cfg_project'); }catch(e){}
+    let pick = (stored!==null) ? stored : (cfgProjects[0] ? cfgProjects[0].id : '');
+    sel.value = cfgProjects.some(p=>p.id===pick) ? pick : '';
+    activeProject = sel.value ? cfgProjects.find(p=>p.id===sel.value) : null;
+    renderCfgProvides(); refreshConfig();
+  }).catch(()=>{});
+}
+// Map a Configuration's stored fields → the intake field ids it satisfies (so we can hide them).
+const _PROV_LABEL={repo:'repo',base_url:'app URL',login_url:'login path',login_user:'login user',login_password:'login password',jira:'Jira connection'};
+function providedFields(p){
+  const s=new Set(); if(!p) return s; const c=p.config||{};
+  if(c.source_repo) s.add('repo');
+  if(c.app_url) s.add('base_url');
+  if(c.login_url) s.add('login_url');
+  if(c.login_user) s.add('login_user');
+  if(c.has_login_password) s.add('login_password');
+  return s;
+}
+function projectHasJira(p){ return !!(p && (p.config||{}).jira_url); }
+function renderCfgProvides(){
+  const box=$('cfgProvides'); if(!box) return;
+  if(!activeProject){ box.style.display='none'; box.innerHTML=''; return; }
+  const prov=[...providedFields(activeProject)]; if(projectHasJira(activeProject)) prov.push('jira');
+  box.style.display='flex';
+  box.innerHTML = `<span class="lead">Provided by this Configuration:</span>`
+    + prov.map(k=>`<span class="prov">✓ ${escapeHtml(_PROV_LABEL[k]||k)}</span>`).join('')
+    + `<span style="margin-left:auto">secrets stay encrypted — decrypted server-side only for the run</span>`;
+}
+function fieldsFor(){
+  let fs;
+  if(!(SELECTED && SELECTED.custom)) fs = (FLOW_INTAKE[SELECTED.id]||{fields:[]}).fields;   // predefined = fixed intake
+  else {
+    fs=[];
+    if(customTracks.has('criteria')) fs.push(F_AC);   // AC agent present → criteria/Jira mandatory
+    const hasTest=[...customTracks].some(t=>['unit','functional','perf','security','regression'].includes(t));
+    fs.push({...F_REPO, required:hasTest});            // a repo is required whenever a test agent is included
+    fs.push(F_SCOPE);
+  }
+  // When a Jira Configuration is active, the AC field only needs the TICKET KEY (connection comes from config).
+  if(projectHasJira(activeProject)) fs = fs.map(f=> f.id==='ac_source'
+    ? {...f, label:'Jira ticket key', placeholder:'e.g. QA-1 — its acceptance criteria are pulled live', help:'The ticket to test; its AC come live from the saved Jira connection.'}
+    : f);
+  // GitHub connected → the Source repository picker provides the repo; drop the text field.
+  if(GH.connected) fs = fs.filter(f=>f.id!=='repo');
+  // A saved Configuration already supplies these — don't ask again.
+  const prov=providedFields(activeProject);
+  return fs.filter(f=>!prov.has(f.id));
+}
+function fieldHtml(f){
+  const tag = f.required?'<span class="req">required</span>':'<span class="opt">optional</span>';
+  const attrs=`data-field="${f.id}" data-required="${!!f.required}" data-label="${escapeHtml(f.label)}" placeholder="${escapeHtml(f.placeholder||'')}"`;
+  const ctrl = f.type==='textarea' ? `<textarea ${attrs} rows="3"></textarea>` : `<input type="text" ${attrs} />`;
+  return `<div class="field"><label>${escapeHtml(f.label)} ${tag}</label>${ctrl}${f.help?`<div class="fhelp">${escapeHtml(f.help)}</div>`:''}</div>`;
+}
+function renderIntake(){
+  const fs=fieldsFor();
+  // Show only the REQUIRED fields; fold the optional ones so a flow isn't a wall of inputs.
+  const req=fs.filter(f=>f.required), opt=fs.filter(f=>!f.required);
+  let html = req.map(fieldHtml).join('');
+  if(opt.length) html += `<details class="opt-fold"${req.length?'':' open'}>`
+    + `<summary>Optional details (${opt.length}) — app URL, login, scope…</summary>`
+    + opt.map(fieldHtml).join('') + `</details>`;
+  $('intakeBody').innerHTML = fs.length? html : '<div class="empty">This flow needs no extra inputs.</div>';
+  $('intakeBody').querySelectorAll('[data-field]').forEach(el=>{
+    if(intakeValues[el.dataset.field]!=null) el.value=intakeValues[el.dataset.field];       // preserve typed values
+    el.addEventListener('input', ()=>{ intakeValues[el.dataset.field]=el.value; el.closest('.field').classList.remove('invalid'); });
+  });
+  $('intakeError').style.display='none';
+}
+function renderScopeSummary(){
+  const lanes=activeColumns(currentCfg());
+  $('runScopeSummary').innerHTML = lanes.length? lanes.map(c=>`<span>${c.icon} ${escapeHtml(c.label)}</span>`).join('') : '<span>nothing selected</span>';
+}
+function refreshConfig(){
+  // Hide the GitHub repo pickers when a Configuration already supplies the repo.
+  if($('githubCard')) $('githubCard').style.display =
+    (GH.connected && !(activeProject && providedFields(activeProject).has('repo'))) ? '' : 'none';
+  renderIntake(); renderScopeSummary(); renderPreviewCard();
+}
+if($('cfgProject')) $('cfgProject').addEventListener('change', ()=>{
+  const sel=$('cfgProject');
+  activeProject = sel.value ? (cfgProjects.find(p=>p.id===sel.value)||null) : null;
+  try{ localStorage.setItem('atm_cfg_project', sel.value); }catch(e){}   // remember the choice (incl. explicit None)
+  renderCfgProvides(); refreshConfig();
+});
+
+// ============ Run accumulator + results dashboard ============
+let RUN=null;
+function resetRun(){ RUN={gates:[],runs:[],pr:null,ac:null,heal:[],agents:new Set(),seen:new Set(),retries:0,
+  mode:$('runMode').value, flow:SELECTED, story:{id:'—'},
+  mock:$('mock').checked, start:Date.now(), status:'running'}; }
+function accumulate(d){ const u=d.update||{};
+  if(d.node){ if(RUN.seen.has(d.node)) RUN.retries++; RUN.seen.add(d.node); if(d.kind==='agent') RUN.agents.add(d.node); }
+  if(u.gate_decisions) RUN.gates=u.gate_decisions;
+  if(u.run_results) RUN.runs=u.run_results;
+  if(u.pr) RUN.pr=u.pr;
+  if(u.jenkins_report) RUN.jenkins=u.jenkins_report;      // CI report (build urls + pass/fail)
+  if(u.security_report) RUN.security=u.security_report;   // SAST scan report (findings by module/severity)
+  if(u.security_artifacts) RUN.securityArts=u.security_artifacts;
+  if(u.repo_analysis) RUN.analysis=u.repo_analysis;      // code-derived routes/login (source of truth)
+  if(u.jira_cases) RUN.jiraCases=u.jira_cases;           // test cases stored back in Jira
+  if(u.jira_reported!==undefined) RUN.jiraReported=u.jira_reported;
+  if(u.acceptance_criteria) RUN.ac=u.acceptance_criteria;
+  if(u.functional_cases) RUN.fcases=u.functional_cases;   // functional test cases derived from AC
+  if(u.heal_notes) RUN.heal=u.heal_notes;                 // self-heal repair log (for the failure detail)
+}
+// The most relevant Jenkins build link (the final/last run) + its status.
+function _jenkinsLink(){
+  const jr=RUN.jenkins; if(!jr) return null;
+  const runs=(jr.runs||[]).filter(r=>r.url);
+  const last=runs.length?runs[runs.length-1]:null;
+  return {url: last?last.url : null, overall: jr.overall, passed: jr.passed, failed: jr.failed, status: jr.status, mock: !!jr.mock};
+}
+const GATE_SUITE = {UNIT:'unit', QG1:'feature', QG2:'regression', SEC:'security'};
+function renderResults(){
+  const shipped=!!RUN.pr, blocked=RUN.status==='blocked';
+  // Collapse the append-only history to FINAL state: latest verdict per gate, latest run per suite.
+  const finalGate={}, gateTries={};
+  RUN.gates.forEach(g=>{ finalGate[g.gate]=g; gateTries[g.gate]=(gateTries[g.gate]||0)+1; });
+  const gates=Object.values(finalGate);
+  const finalRun={}, runTries={};
+  RUN.runs.forEach(r=>{ finalRun[r.suite]=r; runTries[r.suite]=(runTries[r.suite]||0)+1; });
+  const runs=Object.values(finalRun);
+
+  const gPass=gates.filter(g=>g.verdict==='pass').length, gTot=gates.length;
+  const tPass=runs.reduce((a,r)=>a+r.passed,0), tTot=runs.reduce((a,r)=>a+r.passed+r.failed,0);
+  const cycles=RUN.gates.filter(g=>g.verdict==='fail').length;   // self-correction iterations to reach green
+  const secs=((Date.now()-RUN.start)/1000).toFixed(1);
+  const cls=blocked?'bad':((gTot&&gPass<gTot)?'warn':'ok');
+  const title=blocked?'Blocked — human review needed':(shipped?'Shipped — pull request opened':'Completed successfully');
+  const iterNote = blocked ? '' : (cycles? ` · green after ${cycles} self-correction${cycles>1?'s':''}` : ' · passed first iteration');
+  $('verdict').className='verdict '+cls;
+  $('verdict').innerHTML=`<div class="badge">${blocked?'⛔':'✓'}</div>
+    <div><h2>${title}</h2><p>${escapeHtml(RUN.flow?RUN.flow.t:RUN.mode)} · scope <b>${escapeHtml(RUN.mode)}</b>${iterNote}</p></div>
+    <div class="meta">${RUN.mock?'mock run':'live Claude'}<br>${secs}s</div>`;
+  const tiles=[
+    {v:`${gPass}/${gTot||0}`, k:'Gates passed', sub:'final verdicts'},
+    {v: tTot?`${Math.round(tPass/tTot*100)}%`:'—', k:'Tests passed', sub:`${tPass}/${tTot} cases · final`},
+    {v:RUN.agents.size, k:'Agents run'},
+    {v:cycles, k:'Self-corrections', sub:cycles?'gate fix-loops':'clean run'},
+    {v:secs+'s', k:'Duration'},
+  ];
+  $('kpis').innerHTML=tiles.map(t=>`<div class="kpi"><div class="v">${t.v}</div><div class="k">${t.k}</div>${t.sub?`<div class="sub">${t.sub}</div>`:''}</div>`).join('');
+  const allPass = gTot && gPass===gTot && !blocked;
+  const gsum = `<div class="gates-summary ${allPass?'ok':(blocked?'bad':'warn')}">`
+    + (allPass ? `✓ All ${gTot} quality gates passed` : blocked ? `⛔ Blocked — ${gPass}/${gTot} gates green`
+       : `${gPass}/${gTot} gates passed`) + `</div>`;
+  $('rGates').innerHTML = gsum + (gates.length? gates.map(x=>{
+    const checks=(x.checks||[]).map(c=>`<span class="check ${c.ok?'ok':'bad'}">${c.ok?'✓':'✗'} ${escapeHtml(c.label)} <span class="thr">${escapeHtml(c.threshold)}</span></span>`).join('');
+    const fx=gateTries[x.gate]>1?`<span class="m">healed · ${gateTries[x.gate]} attempts</span>`:'';
+    // Why it failed the first time: the original breached checks + failing cases + what Self-Heal did.
+    let why='';
+    const fails=RUN.gates.filter(g=>g.gate===x.gate && g.verdict==='fail');
+    if(fails.length){
+      const f0=fails[0];
+      const bad=(f0.checks||[]).filter(c=>!c.ok).map(c=>`<span class="check bad">✗ ${escapeHtml(c.label)} <span class="thr">${escapeHtml(c.threshold)}</span></span>`).join('');
+      const badRun=RUN.runs.find(r=>r.suite===GATE_SUITE[x.gate] && r.failed>0);
+      const cases=badRun?(badRun.failures||[]).map(c=>`<li><b>${escapeHtml(c.test)}</b> — ${escapeHtml(c.error)}</li>`).join(''):'';
+      const hn=(x.gate==='QG2'&&RUN.heal&&RUN.heal.length)?RUN.heal[RUN.heal.length-1]:null;
+      const heal=hn?`<div class="fixrow">🩹 <b>Self-Heal</b> ${escapeHtml(hn.action||'repaired the failing cases')} — repaired ${(hn.healed||[]).length} case(s)</div>`:'';
+      why=`<details class="whyfail"><summary>Why it failed first — ${escapeHtml(f0.reason)}</summary>`
+        +(bad?`<div class="checks">${bad}</div>`:'')
+        +(cases?`<ul class="failcases">${cases}</ul>`:'')
+        +heal
+        +`<div class="fixrow ok">✓ Re-run on attempt ${gateTries[x.gate]} passed.</div></details>`;
+    }
+    return `<div class="gate-row"><div class="gate-top"><span class="gname">${x.gate}</span><span class="pill ${x.verdict}">${x.verdict.toUpperCase()}</span>${fx}</div>`
+      + (checks?`<div class="checks">${checks}</div>`:`<div class="reason">${escapeHtml(x.reason)}</div>`)+why+`</div>`;
+  }).join('') : '<div class="empty">No gates in scope.</div>');
+  $('rRuns').innerHTML = runs.length? runs.map(r=>{const total=r.passed+r.failed,ok=r.failed===0,perf=r.perf?` · p95 ${r.perf.p95_ms}ms · err ${(r.perf.error_rate*100).toFixed(1)}%`:'',it=runTries[r.suite]>1?` <span class="m">· iteration ${runTries[r.suite]}</span>`:'';return `<div class="run"><span><b>${r.suite}</b>${it}</span><span class="rate" style="color:${ok?'var(--ok)':'var(--fail)'}">${r.passed}/${total} passed<span class="m">${perf}</span></span></div>`;}).join('') : '<div class="empty">No test runs.</div>';
+  renderSources();            // what came in from each source of truth (Jira / dev repo / app)
+  renderJourney(gateTries);   // the Ticket → Production journey (agent-wise, artifacts per stage)
+  // ---- Quick links bar: the PR + the Jenkins run, front-and-centre ----
+  const jl=_jenkinsLink();
+  const prUrl = RUN.pr && RUN.pr.url && RUN.pr.url.startsWith('http') ? RUN.pr.url : null;
+  const links=[];
+  if(prUrl) links.push(`<a class="rlink pr" href="${prUrl}" target="_blank" rel="noopener">
+      <span class="ic">⇱</span><span><b>Pull Request</b><small>${escapeHtml((RUN.pr.repo||'')+(RUN.pr.number?(' #'+RUN.pr.number):''))} · open ↗</small></span></a>`);
+  if(jl && jl.url){ const green=jl.overall==='SUCCESS';
+    links.push(`<a class="rlink ci ${green?'ok':'bad'}" href="${jl.url}" target="_blank" rel="noopener">
+      <span class="ic">🏗️</span><span><b>Jenkins${jl.mock?' (mock)':''}</b><small>${green?'SUCCESS':(jl.overall||jl.status||'—')} · ${jl.passed||0}✓ ${jl.failed||0}✗ · open ↗</small></span></a>`); }
+  if(links.length){ $('resultLinks').style.display='flex'; $('resultLinks').innerHTML=links.join(''); }
+  else { $('resultLinks').style.display='none'; }
+
+  const jlrow = jl ? `<div class="run"><span><b>jenkins</b> <span class="m">CI</span></span><span class="rate" style="color:${jl.overall==='SUCCESS'?'var(--ok)':'var(--fail)'}">${jl.passed||0}/${(jl.passed||0)+(jl.failed||0)} passed${jl.url?` · <a href="${jl.url}" target="_blank" rel="noopener" style="color:var(--accent2)">build ↗</a>`:''}</span></div>` : '';
+  $('rPR').innerHTML = RUN.pr? `<div style="font-weight:700;margin-bottom:6px">${escapeHtml(RUN.pr.title||'Pull request')}</div>`
+      + (prUrl? `<a href="${prUrl}" target="_blank" rel="noopener" class="prlink">${escapeHtml(prUrl)} ↗</a>` : `<div class="m" style="color:var(--muted);font-size:12px;margin-bottom:10px">${escapeHtml(RUN.pr.url||'')}</div>`)
+      + (jlrow?`<div style="margin:10px 0 4px">${jlrow}</div>`:'')
+      + `<div class="prbody">${escapeHtml(RUN.pr.body||'')}</div>`
+    : `<div class="empty">${blocked?'Blocked before shipping.':'This scope does not open a pull request.'}</div>`;
+
+  renderSecurity();
+}
+
+// Security scan report — summary + severity + per-module + top findings + a link to the full report.
+function renderSecurity(){
+  const card=$('rSecCard'), body=$('rSecurity'); if(!card||!body) return;
+  const r=RUN.security;
+  if(!r){ card.style.display='none'; return; }
+  card.style.display='';
+  if(!r.ok){ body.innerHTML=`<div class="sec-bad">⚠ Scan could not run: ${escapeHtml(r.error||'unknown')}</div>`; return; }
+  const s=r.by_severity||{high:0,medium:0,low:0};
+  const reportArt=(RUN.securityArts||[]).find(a=>a.type==='sast-report');
+  const mods=Object.entries(r.by_module||{}).map(([m,n])=>`<span class="sec-mod">${escapeHtml(m)} · ${n}</span>`).join('') || '<span class="sec-mod ok">no findings</span>';
+  const top=(r.findings||[]).slice().sort((a,b)=>({high:0,medium:1,low:2}[a.severity]-{high:0,medium:1,low:2}[b.severity])).slice(0,6)
+    .map(f=>`<li><span class="sev ${f.severity}">${f.severity}</span> <b>${escapeHtml(f.rule)}</b> <span class="m">${escapeHtml(f.file||'')}:${f.line||''}</span></li>`).join('');
+  body.innerHTML =
+    `<div class="sec-cov">Scanned <b>${r.files_scanned}</b> files across <b>${(r.modules_scanned||[]).length}</b> module(s): ${escapeHtml((r.modules_scanned||[]).join(', '))}</div>`
+    + `<div class="sec-sev"><span class="sev high">${s.high} high</span><span class="sev medium">${s.medium} med</span><span class="sev low">${s.low} low</span><span class="sec-total">${r.total} total</span></div>`
+    + `<div class="sec-line">By module: ${mods}</div>`
+    + (top?`<ul class="sec-list">${top}</ul>`:'')
+    + (reportArt?`<div style="margin-top:8px"><span class="fn" style="color:var(--accent2);cursor:pointer" onclick='viewArtifact(${JSON.stringify(reportArt.path)})'>📄 View full report</span></div>`:'');
+}
+
+// ===== Sources of truth: what the run was driven & validated against (Jira / dev repo / app) =====
+function renderSources(){
+  const head=$('sourcesHead'), el=$('sources'); if(!el) return;
+  const inp=(RUN.story&&RUN.story.inputs)||{}, a=RUN.analysis||{}, story=RUN.story||{};
+  const acN=(RUN.ac&&(RUN.ac.criteria||RUN.ac.acceptance_criteria||[]).length)||0;
+  const jiraCfg=(RUN.config&&RUN.config.jira)||null;
+  const isJira=!!jiraCfg || (RUN.jiraCases&&RUN.jiraCases.created);
+  const cards=[];
+  // Jira (requirements)
+  if(isJira || acN){
+    const subs=(RUN.jiraCases&&RUN.jiraCases.created)||[];
+    cards.push(`<div class="src-card jira"><div class="src-h"><span class="src-ic">🎫</span> Jira · requirements</div>
+      <div class="src-b"><div class="src-row"><span>Ticket</span><b>${escapeHtml(story.id||'—')}</b></div>
+        <div class="src-row"><span>Summary</span><b>${escapeHtml((story.title||'').slice(0,60)||'—')}</b></div>
+        <div class="src-row"><span>Acceptance criteria</span><b>${acN||'—'}</b></div>
+        ${subs.length?`<div class="src-row"><span>Cases stored back</span><b>${subs.join(', ')}</b></div>`:''}</div></div>`);
+  }
+  // Dev repo (code — source of truth for behaviour)
+  if(inp.source_repo || a.login_route || (a.ui_routes&&a.ui_routes.length)){
+    cards.push(`<div class="src-card repo"><div class="src-h"><span class="src-ic">📦</span> Dev repo · code</div>
+      <div class="src-b"><div class="src-row"><span>Repository</span><b>${escapeHtml(inp.source_repo||inp.repo||'—')}</b></div>
+        <div class="src-row"><span>Stack</span><b>${escapeHtml(a.stack||'—')}</b></div>
+        <div class="src-row"><span>Login path (from code)</span><b class="src-hi">${escapeHtml(a.login_route||'—')}</b></div>
+        <div class="src-row"><span>Routes derived</span><b>${(a.ui_routes&&a.ui_routes.length)||0}</b></div>
+        ${a.auth_guarded?`<div class="src-row"><span>Auth</span><b>guards protected routes</b></div>`:''}</div></div>`);
+  }
+  // Running app (DOM)
+  if(inp.base_url){
+    cards.push(`<div class="src-card app"><div class="src-h"><span class="src-ic">🌐</span> Running app · DOM</div>
+      <div class="src-b"><div class="src-row"><span>App URL</span><b>${escapeHtml(inp.base_url)}</b></div>
+        <div class="src-row"><span>Login</span><b>${escapeHtml(inp.login_user||(inp.login_user===''?'public':'—'))}</b></div>
+        <div class="src-row"><span>Functional cases</span><b>${(RUN.fcases&&RUN.fcases.length)||'—'}</b></div></div></div>`);
+  }
+  if(!cards.length){ head.style.display='none'; el.style.display='none'; return; }
+  head.style.display='flex'; el.style.display='grid'; el.innerHTML=cards.join('');
+}
+
+// ===== The Ticket → Production journey: each SDLC stage, its agent, gate & artifacts =====
+const JOURNEY_STAGES = [
+  {key:'req',      name:'Requirements',        ic:'🗺️', node:'generate_ac',            gate:null,       arts:[]},
+  {key:'fcases',   name:'Functional Cases',    ic:'📋', node:'generate_functional_cases', gate:null,     arts:['functional']},
+  {key:'build',    name:'Build',               ic:'🛠️', node:'generate_code',          gate:'UNIT',     arts:['code']},
+  {key:'unit',     name:'Unit Tests',          ic:'🧪', node:'run_unit_tests',         gate:'UNIT',     arts:['unit']},
+  {key:'coverage', name:'Code Coverage',       ic:'📈', node:'go_coverage',            gate:'COVERAGE', arts:['coverage']},
+  {key:'func',     name:'Functional · Playwright', ic:'🎭', node:'generate_ui_scripts', gate:'QG1',      arts:['playwright']},
+  {key:'perf',     name:'Performance',         ic:'⚡', node:'generate_perf_scripts',  gate:'QG1',      arts:['k6']},
+  {key:'reg',      name:'Regression',          ic:'🧭', node:'select_regression',      gate:'QG2',      arts:[]},
+  {key:'sec',      name:'Security',            ic:'🛡️', node:'generate_security_scan', gate:'SEC',      arts:['sast']},
+  {key:'a11y',     name:'Accessibility',       ic:'♿', node:'generate_a11y',          gate:'A11Y',     arts:['a11y']},
+  {key:'contract', name:'API Contract',        ic:'🔌', node:'generate_contract',      gate:'CONTRACT', arts:['contract','pact']},
+  {key:'ci',       name:'Jenkins CI',          ic:'🏗️', node:'run_jenkins',            gate:'JENKINS',  arts:[]},
+  {key:'delivery', name:'Delivery → Production',ic:'🚀', node:'open_pr',                gate:null,       arts:[]},
+];
+const AGENT_LABEL = {generate_ac:'Acceptance Criteria agent', generate_code:'Dev agent', run_unit_tests:'Unit Test agent', go_coverage:'Go Coverage agent', generate_go_tests:'Go Test Generation agent',
+  generate_ui_scripts:'Playwright agent', oracle_check:'Oracle Check (test-oracle auditor)', generate_perf_scripts:'Performance agent', select_regression:'Regression agent',
+  generate_security_scan:'Security agent', generate_a11y:'Accessibility agent', generate_contract:'Contract agent',
+  generate_functional_cases:'Functional Case agent', run_jenkins:'Jenkins CI agent', open_pr:'PR agent'};
+
+function _artsFor(types){
+  if(!types.length) return [];
+  return allArtifacts.filter(a=>{ const t=(a.type||'').toLowerCase(), p=(a.path||'').toLowerCase();
+    return types.some(x=> t===x || t.startsWith(x+'-') || p.includes('/'+x+'/') || (x==='playwright'&&p.endsWith('.spec.ts')) || (x==='k6'&&p.endsWith('.k6.js'))); });
+}
+function renderJourney(gateTries){
+  const el=$('journey'); if(!el) return;
+  const finalGate = name => { const v=RUN.gates.filter(g=>g.gate===name); return v.length?v[v.length-1]:null; };
+  const rows=[];
+  for(const st of JOURNEY_STAGES){
+    const ran = RUN.seen.has(st.node);
+    const gd = st.gate ? finalGate(st.gate) : null;
+    const arts = _artsFor(st.arts);
+    // include the stage only if it actually took part in this run
+    if(!ran && !gd && !arts.length) continue;
+    const healed = st.gate && (gateTries[st.gate]||0)>1;
+    let status='ran', label='RAN';
+    if(gd){ status = gd.verdict==='pass' ? (healed?'healed':'pass') : 'fail'; label = gd.verdict==='pass' ? (healed?'HEALED':'PASS') : 'FAILED'; }
+    else if(ran){ status='pass'; label='DONE'; }
+
+    // per-stage evidence
+    let ev='';
+    if(st.key==='req' && RUN.ac){ const n=(RUN.ac.criteria||RUN.ac.acceptance_criteria||[]).length||RUN.ac.length; ev=`Parsed acceptance criteria${n?` — ${n} criteria`:''} (source of truth).`; }
+    if(st.key==='fcases' && RUN.fcases){ ev=`Derived ${RUN.fcases.length} functional test case(s) from the acceptance criteria — each automated case-wise.`; }
+    if(st.key==='sec' && RUN.security && RUN.security.ok){ const s=RUN.security.by_severity; ev=`Scanned ${RUN.security.files_scanned} files across ${(RUN.security.modules_scanned||[]).length} modules — ${RUN.security.total} findings (${s.high} high / ${s.medium} med / ${s.low} low).`; }
+    if(st.key==='ci'){ const jl=_jenkinsLink(); if(jl) ev=`Jenkins ${jl.overall||jl.status} — ${jl.passed||0} passed, ${jl.failed||0} failed${jl.url?` · <a class="jlink" href="${jl.url}" target="_blank" rel="noopener">build ↗</a>`:''}`; }
+    if(st.key==='delivery' && RUN.pr){ const u=RUN.pr.url; ev = (u&&u.startsWith('http'))?`<a class="jlink" href="${u}" target="_blank" rel="noopener">${escapeHtml((RUN.pr.repo||'')+(RUN.pr.number?(' #'+RUN.pr.number):''))} — open PR ↗</a>`:escapeHtml(u||'drafted'); }
+    if(!ev && gd) ev=escapeHtml(gd.reason||'');
+
+    const checks = gd && gd.checks ? gd.checks.map(c=>`<span class="jcheck ${c.ok?'ok':'bad'}">${c.ok?'✓':'✗'} ${escapeHtml(c.label)}</span>`).join('') : '';
+    const artsHtml = arts.length ? `<div class="jarts"><div class="jarts-t">Artifacts by ${escapeHtml(AGENT_LABEL[st.node]||'agent')}</div>`
+      + arts.map(a=>`<span class="jart" onclick='viewArtifact(${JSON.stringify(a.path)})'>${escapeHtml(a.path.split('/').pop())}<span class="jx">${escapeHtml(a.type||'')}</span></span>`).join('') + `</div>` : '';
+
+    rows.push(`<div class="jstage ${status}"><div class="jdot"></div><div class="jcard">
+        <div class="jhead"><span class="jic">${st.ic}</span><b>${st.name}</b>
+          <span class="jagent">· ${escapeHtml(AGENT_LABEL[st.node]||'')}</span>
+          <span class="jbadge ${status}">${label}${healed?` · ${gateTries[st.gate]}×`:''}</span></div>
+        ${ev?`<div class="jreason">${ev}</div>`:''}
+        ${checks?`<div class="jchecks">${checks}</div>`:''}
+        ${artsHtml}
+      </div></div>`);
+  }
+  el.innerHTML = rows.join('') || '<div class="empty" style="padding:20px;color:var(--muted)">No stages ran.</div>';
+}
+
+// ============ Flow builder + live execution preview (auto-layout, reuses the real graph) ============
+let TRACKS=[], AGENTS=[]; const customTracks=new Set();
+function renderPalette(){
+  const p=$('palette'); if(!p) return;
+  p.innerHTML = TRACKS.map(t=>`
+    <div class="chip-agent" style="--cc:${t.color}" draggable="true" data-track="${t.track}" title="Adds: ${t.agents.join(', ')}">
+      <span class="ci">${t.icon}</span>
+      <div><div class="cl">${t.label}</div><div class="cs">${t.agents.join(' · ')}</div></div>
+    </div>`).join('');
+  p.querySelectorAll('.chip-agent').forEach(ch=>{
+    ch.addEventListener('dragstart', e=> e.dataTransfer.setData('text/track', ch.dataset.track));
+    ch.addEventListener('click', ()=> toggleTrack(ch.dataset.track));   // click toggles in/out
+  });
+}
+function syncPaletteUsed(){ document.querySelectorAll('#palette .chip-agent').forEach(ch=>
+  ch.classList.toggle('used', customTracks.has(ch.dataset.track))); }
+function addTrack(t){ if(!t) return; customTracks.add(t);
+  (TRACK_DEPS[t]||[]).forEach(d=>customTracks.add(d));   // pull in prerequisites (Dev needs criteria)
+  refreshConfig(); }
+function removeTrack(t){ customTracks.delete(t);
+  Object.entries(TRACK_DEPS).forEach(([k,deps])=>{ if(deps.includes(t)) customTracks.delete(k); });  // drop dependents
+  refreshConfig(); }
+function toggleTrack(t){ if(!t) return; customTracks.has(t)?removeTrack(t):addTrack(t); }
+
+// Draw the full pipeline for a scope, idle, into any SVG — same renderer the live run uses,
+// so the preview is pixel-identical to what will execute (deps auto-wired by activeColumns).
+function renderStatic(cfg, svgId){
+  buildStart(cfg, svgId);                         // Start + orchestrator + geometry, into the target svg
+  VIS.forEach(c=>{ placeNode(c.id); (colKids[c.id]||[]).forEach(k=> placeNode(k)); });
+  if(hub){ hub.classList.remove('thinking'); hub._thought.textContent='preview · click Run to execute'; }
+}
+// which track a node belongs to (only 1:1 ownerships are removable by clicking the node)
+const LANE_TRACK  = {ac:'criteria', dev:'build', unit_run:'unit', ui:'functional', perf:'perf', reg:'regression', sec:'security', pr:'delivery', jenkins:'jenkins'};
+const CHILD_TRACK = {unit_gate:'unit', perf_run:'perf', reg_run:'regression', qg2:'regression',
+                     sec_run:'security', sec_gate:'security', jenkins_gate:'jenkins', pr_open:'delivery'};
+const TRACK_DEPS  = {build:['criteria'],          // selecting Dev pulls in Acceptance Criteria
+                     functional:['criteria'],     // Functional (cases → automation) is requirements-driven
+                     jenkins:['functional','delivery']};  // Jenkins runs the UI automation & PRs it → needs both
+function markRemovable(id, tr){
+  const nd=nodes[id]; if(!nd || !customTracks.has(tr)) return;
+  nd.g.classList.add('removable'); nd.g.style.cursor='pointer';
+  const ttl=document.createElementNS(SVGNS,'title'); ttl.textContent='Click to remove '+tr; nd.g.appendChild(ttl);
+  nd.g.addEventListener('click', ()=> removeTrack(tr));
+}
+function attachNodeRemovers(){                    // make the preview nodes themselves configurable
+  VIS.forEach(c=>{ if(LANE_TRACK[c.id]) markRemovable(c.id, LANE_TRACK[c.id]);
+    (colKids[c.id]||[]).forEach(k=>{ if(CHILD_TRACK[k]) markRemovable(k, CHILD_TRACK[k]); }); });
+}
+function currentCfg(){
+  if($('runMode').value!=='custom') return {mode:$('runMode').value};
+  // AC (criteria) and Dev (build) are now ordinary agents on the canvas — no separate build toggle.
+  return {mode:'custom', tracks:[...customTracks], open_pr:$('customPR').checked};
+}
+function renderPreviewCard(){
+  const editable = !!(SELECTED && SELECTED.custom);   // ONLY the Custom flow is customizable
+  $('paletteWrap').style.display = editable?'':'none';
+  $('builderWrap').classList.toggle('nopalette', !editable);
+  $('prToggleWrap').style.display = editable?'':'none';
+  const cfg=currentCfg(); const {tracks}=resolveCfg(cfg);
+  const list=[...tracks];
+  // Custom with nothing chosen → a genuinely empty canvas the user builds onto.
+  if(editable && customTracks.size===0){
+    const svg=$('previewGraph'); [...svg.querySelectorAll('*')].forEach(n=>n.remove()); svg.removeAttribute('viewBox');
+    $('canvasEmpty').style.display='grid';
+  } else {
+    $('canvasEmpty').style.display='none';
+    renderStatic(cfg, 'previewGraph');
+    if(editable) attachNodeRemovers();             // clicking a node removes its track (Custom only)
+  }
+  $('previewScope').textContent = list.length? list.join(' · ') : (editable?'empty — drag an agent in':'—');
+  $('previewHint').textContent = editable
+    ? 'Add: drag or click an agent · Remove: click its node in the canvas · deps are wired in automatically'
+    : 'This is exactly what runs when you click Run pipeline — predefined flows are fixed';
+  syncPaletteUsed();
+}
+// drop an agent chip onto the preview canvas
+(function(){ const dz=$('canvasDrop'); if(!dz) return;
+  dz.addEventListener('dragover', e=>{ e.preventDefault(); dz.classList.add('over'); });
+  dz.addEventListener('dragleave', ()=> dz.classList.remove('over'));
+  dz.addEventListener('drop', e=>{ e.preventDefault(); dz.classList.remove('over'); addTrack(e.dataTransfer.getData('text/track')); });
+})();
+$('customPR').addEventListener('change', refreshConfig);
+
+async function run(){
+  // ---- validate the flow's required inputs before launching ----
+  const inputs={}, missing=[];
+  $('intakeBody').querySelectorAll('[data-field]').forEach(el=>{
+    const v=el.value.trim(); inputs[el.dataset.field]=v; el.closest('.field').classList.remove('invalid');
+    if(el.dataset.required==='true' && !v){ missing.push(el.dataset.label); el.closest('.field').classList.add('invalid'); }
+  });
+  if(missing.length){ const e=$('intakeError'); e.style.display='flex'; e.innerHTML='⚠ Please provide: '+missing.map(escapeHtml).join(', '); return; }
+  const projProvidesRepo = !!(activeProject && providedFields(activeProject).has('repo'));
+  if(!projProvidesRepo) applyGitHubInputs(inputs);   // source → inputs.repo/source_repo, destination → dest_repo/new_repo
+
+  showView('run'); resetRun();
+  const btn=$('runBtn'); btn.disabled=true; $('statusDot').className='dot live'; $('graphStatus').textContent='running';
+  $('modeTag').textContent=$('mock').checked?'running · mock':'running · live Claude'; resetUI();
+  const story={ id:(inputs.repo? inputs.repo.split('/').filter(Boolean).pop() : (SELECTED?SELECTED.id.toUpperCase():'RUN')),
+                title:(SELECTED?SELECTED.t:'Run'), description:inputs.ac_source||inputs.scope_prompt||'' };
+  RUN.story=story;
+  const body={ mock:$('mock').checked, fail_gate:$('failGate').value||null, mode:$('runMode').value, story, inputs };
+  if(activeProject) body.project_id=activeProject.id;   // backend decrypts secrets + prefills repo/app/login
+  if(inputs.ac_source){
+    const v=inputs.ac_source.trim();
+    // With a Jira Configuration + a ticket-key-looking value, pull the AC live; otherwise treat it as raw AC.
+    if(projectHasJira(activeProject) && /^[A-Za-z][A-Za-z0-9]+-\d+$/.test(v)) body.ticket=v;
+    else body.ac_input=v;
+  }
+  if($('runMode').value==='custom'){                       // custom flow: tracks come from the builder canvas
+    if(SELECTED && SELECTED.custom){                        // the editable Custom flow
+      body.tracks = [...customTracks];
+      body.open_pr = $('customPR').checked;
+    } else {                                                // a predefined custom flow (functional/regression/unit)
+      body.tracks = (SELECTED && SELECTED.tracks) ? SELECTED.tracks : [];
+      body.open_pr = body.tracks.includes('delivery');     // PR only when the flow includes the PR agent
+    }
+  }
+  try{
+    const resp=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const data=await resp.json();
+    if(!data.run_id) throw new Error(data.detail||'could not start run');
+    connectStream(data.run_id);          // run executes in the background; we attach to its event stream
+  }catch(e){ log(null,`<b style="color:var(--fail)">Request failed: ${escapeHtml(e.message)}</b>`); closeStream(); }
+}
+
+// ---- Reconnectable run stream: replays stored events then tails live, so refresh/reopen works ----
+let currentES=null, RUN_ID=null, streamFinished=false;
+function closeStream(){ if(currentES){ streamFinished=true; currentES.close(); currentES=null; }
+  const b=$('runBtn'); if(b) b.disabled=false; $('statusDot').className='dot'; clearEdges(); if(hub) hub.classList.remove('thinking'); }
+function connectStream(runId){
+  closeStream(); streamFinished=false; RUN_ID=runId;
+  try{ localStorage.setItem('atm_last_run', runId); }catch(e){}
+  const es=new EventSource('/api/runs/'+runId+'/stream'); currentES=es;
+  ['start','think','node','done','error'].forEach(t=> es.addEventListener(t, e=>{ try{ handleSSE(t, JSON.parse(e.data)); }catch(err){ console.error(err); } }));
+  es.onerror=()=>{ if(streamFinished){ es.close(); } };   // stream ended normally after done/error
+}
+// REPLAY_SILENT: opening a FINISHED run rebuilds its state without animating the graph, so it
+// lands straight on Results (smooth) instead of flashing through the whole execution replay.
+let REPLAY_SILENT=false;
+function handleSSE(ev, data){
+  if(ev==='start'){ applyManifest(data.manifest); if(RUN){RUN.mock=data.mock; RUN.story=data.story; RUN.config=data.config;}
+    if(!REPLAY_SILENT){ buildStart(data.config); hubThink('perceiving story…', true); log(null,`Agent core started for <b>${data.story.id}</b> (${data.mock?'mock':'live Claude'})`); const ld=$('runsLive'); if(ld) ld.hidden=false; } }
+  else if(ev==='think'){ if(REPLAY_SILENT) return; sawThink=true; const nx=data.next&&data.next!=='finish'&&data.next!=='block'?` → ${data.next}`:''; hubThink(data.reasoning||('deciding'+nx), data.next!=='finish'); log(null,`<span style="color:var(--accent2)">🧠 core</span> ${escapeHtml(data.reasoning||'')}${nx?` <span class="n">${escapeHtml(nx)}</span>`:''}`); }
+  else if(ev==='node'){ accumulate(data); if(!REPLAY_SILENT) stepNode(data); }
+  else if(ev==='done'){ if(RUN)RUN.status=data.status||'done'; renderResults(); streamFinished=true; closeStream(); refreshRuns(); { const ld=$('runsLive'); if(ld) ld.hidden=true; }
+    if(REPLAY_SILENT){ showView('results'); }
+    else { finalizeFrontier(); orchDone(data.status==='blocked'||data.status==='interrupted'?'blocked':'success'); clearEdges(); $('graphStatus').textContent=data.status||'done'; $('modeTag').textContent=data.status||'done'; log(null, data.status==='interrupted'?'<b style="color:var(--fail)">⚠ run was interrupted by a server restart</b>':'<b style="color:var(--ok)">✓ Agent core reached the goal</b>'); setTimeout(()=>{ if(CURRENT==='run') showView('results'); }, 700); } }
+  else if(ev==='error'){ if(RUN)RUN.status='error'; streamFinished=true; closeStream(); refreshRuns(); { const ld=$('runsLive'); if(ld) ld.hidden=true; }
+    if(REPLAY_SILENT){ renderResults(); showView('results'); }
+    else { finalizeFrontier(); hubThink('error', false); $('graphStatus').textContent='error'; log(null,`<b style="color:var(--fail)">✗ ${escapeHtml(data.message)}</b>`); } }
+}
+// Reopen a run: a FINISHED run goes straight to Results (silent replay); a LIVE run shows the graph.
+function resumeRun(runId){
+  fetch('/api/runs/'+runId).then(r=> r.ok?r.json():null).then(r=>{
+    const terminal = r && ['done','blocked','error','interrupted'].includes(r.status);
+    REPLAY_SILENT = !!terminal;
+    resetRun(); resetUI();
+    if(terminal){ showView('results');
+      $('verdict').className='verdict'; $('verdict').innerHTML='<div class="badge">⏳</div><div><h2>Loading run…</h2><p>fetching results</p></div>';
+      ['sources','sourcesHead','journey','resultLinks'].forEach(id=>{ const e=$(id); if(e) e.innerHTML=''; });
+    } else { showView('run'); $('runBtn').disabled=true; $('statusDot').className='dot live'; $('graphStatus').textContent='loading'; }
+    connectStream(runId);
+  }).catch(()=>{ REPLAY_SILENT=false; resetRun(); resetUI(); showView('run'); connectStream(runId); });
+}
+
+// ---- Home dashboard: recent runs strip + stats ----
+const _AGO=t=>{ const s=Math.max(1,(Date.now()/1000-t)); if(s<60)return Math.floor(s)+'s ago'; if(s<3600)return Math.floor(s/60)+'m ago'; if(s<86400)return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago'; };
+function renderHomeRecent(runs){
+  const list=$('homeRecent'); if(!list) return;
+  if(!runs||!runs.length){ list.innerHTML='<div class="empty" style="padding:18px;color:var(--muted)">No runs yet — start a new test above.</div>'; return; }
+  const S=st=> (st==='running'||st==='queued')?st:(st==='done'?'done':(st==='blocked'||st==='error'||st==='interrupted')?st:'done');
+  list.innerHTML=runs.slice(0,6).map(r=>`<div class="run-row" data-run="${r.id}">
+      <span class="rnum">#${r.num}</span>
+      <span class="rbadge ${S(r.status)}">${r.status}</span>
+      <span class="rflow">${escapeHtml(r.flow||r.mode||'run')}</span>
+      <span class="rmode">${escapeHtml(r.mode||'')}</span>
+      <span class="rtime">${_AGO(r.created_at)}</span></div>`).join('');
+  list.querySelectorAll('.run-row').forEach(el=> el.addEventListener('click', ()=> resumeRun(el.dataset.run)));
+}
+function renderHomeStats(runs){
+  const el=$('homeStats'); if(!el) return; runs=runs||[];
+  const c=s=> runs.filter(r=> s==='active'?(r.status==='running'||r.status==='queued'):r.status===s).length;
+  const cards=[['Total runs',runs.length,'var(--text)'],['Running',c('active'),'var(--ok)'],
+               ['Completed',c('done'),'var(--text)'],['Needs attention',c('blocked')+c('error')+c('interrupted'),'var(--fail)']];
+  el.innerHTML=cards.map(([l,v,col])=>`<div class="stat-card"><div class="v" style="color:${col}">${v}</div><div class="l">${l}</div></div>`).join('');
+}
+function refreshRuns(){ return fetch('/api/runs').then(r=>r.json()).then(d=>{ renderHomeRecent(d.runs); renderHomeStats(d.runs); renderRunsPage(d.runs); return d.runs; }).catch(()=>{}); }
+
+// ---- Dedicated Runs page (full history + live state) ----
+const _RSTATE=st=> (st==='running'||st==='queued')?st:(st==='done'?'done':(st==='blocked'||st==='error'||st==='interrupted')?st:'done');
+const _DUR=(a,b)=>{ const s=Math.max(0,(b-a)); if(s<1)return '—'; if(s<60)return s.toFixed(0)+'s'; if(s<3600)return (s/60).toFixed(1)+'m'; return (s/3600).toFixed(1)+'h'; };
+const _WHEN=t=>{ const d=new Date(t*1000); return d.toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}); };
+function _cfgSummary(r){
+  const i=r.inputs||{}, t=(r.tracks||[]);
+  const src=i.repo||i.source_repo||'—';
+  const dst=i.dest_repo||(i.new_repo?('new: '+i.new_repo):'draft only');
+  const rows=[
+    ['Agents', t.length?t.join(', '):(r.mode||'—')],
+    ['Source repo', src],
+    ['Destination', dst],
+    ['App URL', i.base_url||'—'],
+  ];
+  if(i.tags) rows.push(['Tags', i.tags]);
+  if(i.scope_prompt) rows.push(['Scope', i.scope_prompt]);
+  if(i.ac_source) rows.push(['Criteria', (i.ac_source+'').slice(0,120)]);
+  return `<div class="cfg-grid">${rows.map(([k,v])=>`<div class="cfg-k">${k}</div><div class="cfg-v">${escapeHtml(String(v))}</div>`).join('')}</div>`;
+}
+let _lastRunsSig='';
+function renderRunsPage(runs){
+  const el=$('runsPage'); if(!el) return;
+  if($('runsSub')) $('runsSub').textContent = `${(runs||[]).length} run(s) · runs continue in the background · ⚙ shows the config it started with`;
+  if(!runs || !runs.length){ _lastRunsSig='empty'; el.innerHTML='<div class="runs-empty">No runs yet. Pick a flow and hit Run — it’ll appear here and keep running even if you close the tab.</div>'; return; }
+  // Skip the re-render when nothing changed — avoids the 4s-poll flicker and preserves expanded ⚙ rows.
+  const sig=runs.map(r=>`${r.id}:${r.status}:${r.updated_at}`).join('|');
+  if(sig===_lastRunsSig) return;
+  _lastRunsSig=sig;
+  el.innerHTML=`<table class="runs-table"><thead><tr>
+      <th style="width:52px">#</th><th style="width:110px">State</th><th>Flow</th><th style="width:110px">Mode</th>
+      <th style="width:150px">Started</th><th style="width:90px">Duration</th><th style="width:170px; text-align:right">Actions</th></tr></thead>
+    <tbody>${runs.map(r=>`<tr class="rrow" data-run="${r.id}">
+      <td class="c-num">#${r.num}</td>
+      <td><span class="rbadge ${_RSTATE(r.status)}">${r.status}</span></td>
+      <td class="c-flow">${escapeHtml(r.flow||r.mode||'run')}</td>
+      <td class="c-mode">${escapeHtml(r.mode||'')}</td>
+      <td>${_WHEN(r.created_at)}</td>
+      <td>${(r.status==='running'||r.status==='queued')?'<span class="rbadge running">live</span>':_DUR(r.created_at, r.updated_at)}</td>
+      <td class="c-act"><div class="rrow-act">
+        <button class="cfg-btn" data-cfg="${r.id}" type="button">⚙ Config</button>
+        <span class="open-link">Open <span class="arr">→</span></span>
+      </div></td></tr>
+      <tr class="cfg-row" id="cfg-${r.id}" style="display:none"><td colspan="7">${_cfgSummary(r)}</td></tr>`).join('')}</tbody></table>`;
+  el.querySelectorAll('.cfg-btn').forEach(b=> b.addEventListener('click', e=>{ e.stopPropagation();
+    const row=$('cfg-'+b.dataset.cfg); const open=row.style.display!=='none';
+    row.style.display=open?'none':'table-row'; b.classList.toggle('on', !open); }));
+  el.querySelectorAll('.rrow').forEach(tr=> tr.addEventListener('click', ()=> resumeRun(tr.dataset.run)));
+}
+let _runsPoll=null;
+function startRunsPolling(){ refreshRuns(); if(_runsPoll) return; _runsPoll=setInterval(refreshRuns, 4000); }
+function stopRunsPolling(){ if(_runsPoll){ clearInterval(_runsPoll); _runsPoll=null; } }
+$('runsNewFlow').addEventListener('click', ()=> showView('flows'));
+$('homeStart').addEventListener('click', ()=> showView('flows'));
+$('homeAllRuns').addEventListener('click', ()=> showView('runs'));
+
+// ---- Projects: per-project config (Jira + App + Repos + Jenkins), secrets encrypted server-side ----
+let PROJECTS=[], EDITING=null;
+const PF = ['name','jira_url','jira_email','jira_token','app_url','login_url','login_user','login_password','source_repo','dest_repo','jenkins_url','jenkins_job','jenkins_token'];
+const SECRETS = ['jira_token','login_password','jenkins_token'];
+function loadProjects(){ fetch('/api/projects').then(r=>r.json()).then(d=>{ PROJECTS=d.projects||[]; renderProjectList(); }).catch(()=>{}); }
+function renderProjectList(){
+  const el=$('projList'); if(!el) return;
+  el.innerHTML = PROJECTS.length ? PROJECTS.map(p=>{ const c=p.config||{};
+    return `<div class="proj-card" data-proj="${p.id}">
+      <span class="pc-name">${escapeHtml(p.name)}</span>
+      <span class="pc-meta">${escapeHtml(c.jira_url||'no Jira')} · ${escapeHtml(c.app_url||'no app')} · ${escapeHtml(c.source_repo||'—')}</span>
+      <span class="pc-run">edit →</span></div>`; }).join('')
+    : '<div class="empty" style="padding:16px;color:var(--muted)">No projects yet. Create one to configure Jira, the app, repos &amp; CI once and reuse it.</div>';
+  el.querySelectorAll('.proj-card').forEach(c=> c.addEventListener('click', ()=> openProject(PROJECTS.find(p=>p.id===c.dataset.proj))));
+}
+function openProject(p){
+  EDITING = p || null;
+  const c = (p&&p.config)||{};
+  PF.forEach(k=> { const el=$('pf_'+k); if(el) el.value = (SECRETS.includes(k)? '' : (k==='name'?(p?p.name:''):(c[k]||''))); });
+  // show "set" badges for secrets that already exist
+  SECRETS.forEach(k=>{ const b=$('pf_'+k+'_set'); if(b) b.textContent = (c['has_'+k])?'· saved':''; });
+  $('pf_delete').style.display = p? '' : 'none';
+  $('pf_jira_status').textContent=''; $('pf_jira_status').className='pf-status';
+  $('projForm').style.display=''; $('projList').style.display='none'; $('projNew').style.display='none';
+  window.scrollTo(0, $('projForm').offsetTop);
+}
+function closeProject(){ $('projForm').style.display='none'; $('projList').style.display=''; $('projNew').style.display=''; loadProjects(); }
+function collectProject(){
+  const config={}; PF.forEach(k=>{ if(k==='name') return; const v=($('pf_'+k).value||'').trim();
+    if(SECRETS.includes(k)){ if(v) config[k]=v; } else config[k]=v; });   // blank secret = keep existing
+  return { id: EDITING?EDITING.id:undefined, name: ($('pf_name').value||'').trim()||'Untitled project', config };
+}
+$('projNew').addEventListener('click', ()=> openProject(null));
+$('pf_cancel').addEventListener('click', closeProject);
+$('pf_save').addEventListener('click', ()=>{
+  const body=collectProject(); if(!body.name){ return; }
+  fetch('/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(r=>r.json()).then(()=> closeProject()).catch(e=> alert('Save failed: '+e.message));
+});
+$('pf_delete').addEventListener('click', ()=>{
+  if(!EDITING || !confirm('Delete this project?')) return;
+  fetch('/api/projects/'+EDITING.id,{method:'DELETE'}).then(()=> closeProject());
+});
+$('pf_jira_test').addEventListener('click', ()=>{
+  const s=$('pf_jira_status'); s.className='pf-status'; s.textContent='Testing…';
+  const url=$('pf_jira_url').value.trim(), email=$('pf_jira_email').value.trim(), token=$('pf_jira_token').value.trim();
+  if(!token){ s.className='pf-status bad'; s.textContent='Enter the API token to test (or re-enter it to change).'; return; }
+  fetch('/api/jira/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jira_url:url,jira_email:email,jira_token:token})})
+    .then(r=> r.ok?r.json():r.json().then(e=>Promise.reject(e)))
+    .then(d=>{ s.className='pf-status ok'; s.textContent=`✓ Connected as ${d.account} · ${d.projects.length} project(s)`; })
+    .catch(e=>{ s.className='pf-status bad'; s.textContent='✗ '+((e.detail)||'connection failed'); });
+});
+
+$('runBtn').addEventListener('click', run);
+$('backFlows').addEventListener('click', ()=>showView('flows'));
+$('toFlows').addEventListener('click', ()=>showView('flows'));
+$('runAgain').addEventListener('click', run);
+// Run-detail tabs: switch between the live graph and the results dashboard of the SAME run.
+document.querySelectorAll('.rtab').forEach(b=> b.addEventListener('click', ()=>{
+  if(b.dataset.rt==='results'){ renderResults(); showView('results'); }
+  else showView('run');
+}));
+function syncRunTabs(){ document.querySelectorAll('.rtab').forEach(b=> b.classList.toggle('active', b.dataset.rt===CURRENT)); }
+$('modal').addEventListener('click', e=>{ if(e.target.id==='modal') closeModal(); });
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeModal(); });
+
+// ============ GitHub: connection badge + source/destination repo pickers ============
+let GH = { connected:false, repos:[] };
+function initGitHub(){
+  fetch('/api/github/status').then(r=>r.json()).then(s=>{
+    GH.connected = !!s.connected; GH.oauth = !!s.oauth; GH.login = s.login;
+    if(s.connected){
+      $('ghBadge').innerHTML = 'GitHub: '+s.login+' · <a href="/auth/logout" style="color:var(--muted)">logout</a>';
+      $('ghBadge').style.color = 'var(--ok)';
+    } else {
+      $('ghBadge').textContent = s.oauth ? 'GitHub: signed out' : 'GitHub: not connected';
+      $('ghBadge').style.color = 'var(--muted)';
+    }
+    if($('githubCard')) $('githubCard').style.display = s.connected ? '' : 'none';
+    if($('ghConn')) $('ghConn').textContent = s.connected ? ('@'+s.login) : 'not connected';
+    // sidebar user footer + home greeting
+    $('sbUser').textContent = s.connected ? ('@'+s.login) : 'not signed in';
+    $('sbLogout').style.display = s.connected ? '' : 'none';
+    if($('homeGreeting')) $('homeGreeting').textContent = s.connected ? ('Welcome, '+s.login) : 'Welcome';
+    // Sidebar + navigation are shown only when signed in; otherwise gate on the login screen.
+    if(s.oauth && !s.connected){
+      document.body.classList.remove('has-sidebar'); showView('login');
+    } else {
+      document.body.classList.add('has-sidebar');
+      const _q=new URLSearchParams(location.search), deep=_q.get('run'), dview=_q.get('view');
+      if(deep){ resumeRun(deep); }              // ?run=<id> deep-link → open that run
+      else if(dview && ALL_VIEWS.includes(dview)){ showView(dview); }   // ?view=<name> deep-link
+      else { if(CURRENT==='login') showView('home'); resumeInFlight(); }
+    }
+    refreshConfig();   // re-render intake (drops the repo text field when GitHub provides it)
+    if(s.connected) fetch('/api/github/repos').then(r=>r.json()).then(d=>{ GH.repos=d.repos||[]; renderRepoPickers(); }).catch(()=>{});
+  }).catch(()=>{ $('ghBadge').textContent='GitHub: n/a'; document.body.classList.add('has-sidebar'); if(CURRENT==='login') showView('home'); });
+}
+function renderRepoPickers(){
+  const src=$('sourceRepo'), dst=$('destRepo'); if(!src||!dst) return;
+  const opts = GH.repos.map(r=>`<option value="gh:${r.full_name}">${r.full_name}${r.private?' · private':''}</option>`).join('');
+  src.innerHTML = `<option value="repos/idurar">IDURAR ERP — demo (running locally)</option>` + opts;
+  dst.innerHTML = `<option value="__draft__">Draft only — don't open a PR</option>`
+    + `<option value="__new__">＋ Create a new repository…</option>` + opts;
+}
+$('destRepo') && $('destRepo').addEventListener('change', ()=>{
+  $('newRepoName').style.display = $('destRepo').value==='__new__' ? '' : 'none'; });
+
+// merge the GitHub source/destination selections into a run's inputs
+function applyGitHubInputs(inputs){
+  if(!GH.connected) return;
+  const sv = $('sourceRepo').value;
+  if(sv.startsWith('gh:')){ const full=sv.slice(3); inputs.repo='https://github.com/'+full; inputs.source_repo=full; }
+  else { inputs.repo = sv; if(!inputs.base_url && sv==='repos/idurar') inputs.base_url='http://localhost:3000'; }
+  const dv = $('destRepo').value;
+  if(dv==='__new__'){ const n=$('newRepoName').value.trim(); if(n) inputs.new_repo=n; }
+  else if(dv!=='__draft__' && dv){ inputs.dest_repo = dv.replace(/^gh:/,''); }
+}
+
+// If a run was in progress when the page was closed/refreshed, re-attach to it automatically.
+function resumeInFlight(){
+  let last; try{ last=localStorage.getItem('atm_last_run'); }catch(e){}
+  if(!last) return;
+  fetch('/api/runs/'+last).then(r=> r.ok?r.json():null).then(r=>{
+    if(r && (r.status==='running' || r.status==='queued')) resumeRun(last);
+  }).catch(()=>{});
+}
+
+// boot — initGitHub decides Home (signed in) vs the login gate.
+renderFlows();
+showView('home');
+fetch('/api/manifest').then(r=>r.json()).then(m=>{ applyManifest(m); renderPalette(); renderCatalog(); refreshConfig(); }).catch(()=>{});
+initGitHub();
+refreshRuns();
+</script>
+</body>
+</html>

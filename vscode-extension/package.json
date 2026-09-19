@@ -1,0 +1,78 @@
+{
+  "name": "ai-testing-marketplace",
+  "displayName": "AI Testing Marketplace",
+  "description": "Agentic testing from your editor: run playbooks (Jira → test cases → Playwright/k6/security/coverage → CI → PR), watch results, overlay Go coverage, and give Copilot/Cursor agent mode the marketplace as tools via MCP.",
+  "version": "0.1.0",
+  "publisher": "ai-testing-marketplace",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "galleryBanner": { "color": "#0F172A", "theme": "dark" },
+  "pricing": "Free",
+  "repository": { "type": "git", "url": "https://github.com/aiqalearning/ai-testing-marketplace" },
+  "homepage": "https://github.com/aiqalearning/ai-testing-marketplace#readme",
+  "bugs": { "url": "https://github.com/aiqalearning/ai-testing-marketplace/issues" },
+  "engines": { "vscode": "^1.101.0" },
+  "categories": ["Testing", "AI", "Other"],
+  "keywords": ["testing", "ai agents", "playwright", "k6", "security", "coverage", "mcp", "copilot", "jira", "jenkins"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [{ "id": "aiTestingMarketplace", "title": "AI Testing Marketplace", "icon": "media/icon.svg" }]
+    },
+    "views": {
+      "aiTestingMarketplace": [
+        { "id": "atm.playbooks", "name": "Playbooks" },
+        { "id": "atm.configurations", "name": "Configurations" },
+        { "id": "atm.runs", "name": "Runs" }
+      ]
+    },
+    "viewsWelcome": [
+      { "view": "atm.playbooks", "contents": "Connect to an AI Testing Marketplace backend to see playbooks.\n[Start local backend](command:atm.startBackend)\n[Configure backend URL](command:workbench.action.openSettings?%22aiTestingMarketplace.backendUrl%22)\n[Open setup guide](command:atm.setupGuide)" }
+    ],
+    "commands": [
+      { "command": "atm.runPlaybook", "title": "ATM: Run Playbook…", "icon": "$(play)" },
+      { "command": "atm.openResults", "title": "ATM: Open Run Results" },
+      { "command": "atm.openDashboard", "title": "ATM: Open Dashboard" },
+      { "command": "atm.refresh", "title": "ATM: Refresh", "icon": "$(refresh)" },
+      { "command": "atm.registerMcp", "title": "ATM: Register MCP server for Copilot / Cursor agent mode" },
+      { "command": "atm.showCoverage", "title": "ATM: Show Go coverage overlay (LCOV)" },
+      { "command": "atm.startBackend", "title": "ATM: Start local backend" },
+      { "command": "atm.setupGuide", "title": "ATM: Open setup guide" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "atm.runPlaybook", "when": "view == atm.playbooks", "group": "navigation" },
+        { "command": "atm.refresh", "when": "view =~ /^atm\\./", "group": "navigation" }
+      ]
+    },
+    "configuration": {
+      "title": "AI Testing Marketplace",
+      "properties": {
+        "aiTestingMarketplace.backendUrl": { "type": "string", "default": "http://127.0.0.1:8090", "description": "URL of the AI Testing Marketplace backend (local `python -m web.server`, or your team's hosted instance)." },
+        "aiTestingMarketplace.platformPath": { "type": "string", "default": "", "description": "Path to the agentic-testing-pipeline checkout — used to start the local backend, launch the MCP server, and find generated/coverage/coverage.lcov. Defaults to the workspace folder." },
+        "aiTestingMarketplace.pythonPath": { "type": "string", "default": "python", "description": "Python used to run the backend and MCP server (e.g. .venv/bin/python)." }
+      }
+    },
+    "walkthroughs": [
+      {
+        "id": "atm.setup",
+        "title": "Get started with AI Testing Marketplace",
+        "description": "Connect the extension to a backend, run your first playbook, and give your coding agent the marketplace as tools.",
+        "steps": [
+          { "id": "atm.step.backend", "title": "Connect a backend", "description": "The extension is a client of the AI Testing Marketplace platform. Run it locally or point to your team's hosted instance.\n[Start local backend](command:atm.startBackend)\n[Configure URL](command:workbench.action.openSettings?%22aiTestingMarketplace.backendUrl%22)", "media": { "markdown": "media/walkthrough/backend.md" }, "completionEvents": ["onCommand:atm.startBackend", "onSettingChanged:aiTestingMarketplace.backendUrl"] },
+          { "id": "atm.step.run", "title": "Run your first playbook", "description": "Pick a saved Configuration (Jira + app + repo + Jenkins) and a Jira ticket — the agents derive cases, generate grounded automation, self-heal, run CI and open a PR.\n[Run Playbook…](command:atm.runPlaybook)", "media": { "markdown": "media/walkthrough/run.md" }, "completionEvents": ["onCommand:atm.runPlaybook"] },
+          { "id": "atm.step.agent", "title": "Give your coding agent the marketplace", "description": "Register the MCP server so Copilot agent mode, Cursor or Claude Code can start runs and read results as tools.\n[Register MCP server](command:atm.registerMcp)", "media": { "markdown": "media/walkthrough/agent.md" }, "completionEvents": ["onCommand:atm.registerMcp"] }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npx @vscode/vsce package --no-dependencies",
+    "publish": "npx @vscode/vsce publish --no-dependencies",
+    "publish:ovsx": "npx ovsx publish *.vsix"
+  },
+  "devDependencies": { "@types/node": "^20.14.0", "@types/vscode": "^1.101.0", "typescript": "^5.5.0" }
+}

@@ -1,0 +1,21 @@
+# Python lint + format standard for the platform (see docs/STANDARDS.md §6)
+line-length = 120
+target-version = "py313"
+extend-exclude = ["generated", ".venv", "e2e-runner", "vscode-extension", "design-system", "repos"]
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+# Deliberate, documented exclusions — everything else (incl. all F-codes and real B checks) is enforced.
+ignore = [
+  "E501",  # long lines are allowed where they keep LLM prompts/tables readable
+  "E702",  # compact one-liners (`a = 1; b = 2`) are used intentionally in a few dense agent loops
+  "B904",  # user-facing HTTPException/RuntimeError messages; chaining the original traceback adds noise
+]
+
+[lint.per-file-ignores]
+# Imports must follow sys.path setup / lazy provider loading in these entrypoints.
+"web/server.py" = ["E402"]
+"src/mcp_server.py" = ["E402"]
+
+[format]
+quote-style = "double"

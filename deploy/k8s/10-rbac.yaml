@@ -1,0 +1,32 @@
+# In-cluster per-pod resource sampling: the platform reads pods + pod metrics with its own
+# ServiceAccount, so NO kubeconfig file is needed when it runs inside the cluster. Read-only.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: marketplace
+  namespace: ai-testing
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: marketplace-pod-reader
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list"]
+  - apiGroups: ["metrics.k8s.io"]        # kubectl top pod (metrics-server)
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: marketplace-pod-reader
+subjects:
+  - kind: ServiceAccount
+    name: marketplace
+    namespace: ai-testing
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: marketplace-pod-reader

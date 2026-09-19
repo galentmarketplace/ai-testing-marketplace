@@ -1,0 +1,40 @@
+name: ci
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - run: pip install -r requirements.txt ruff
+      - name: Lint
+        run: ruff check src web
+      - name: Registry + plan sanity
+        run: python -c "from src.registry import REGISTRY, plan_for; print(len(REGISTRY),'agents'); print([s.id for s in plan_for({'mode':'full'})])"
+      - name: Mock end-to-end pipeline (all tracks)
+        env: { MOCK_LLM: "1" }
+        run: |
+          python - <<'PY'
+          from src.orchestrator import orchestrate
+          ev=list(orchestrate({"id":"CI-1","title":"ci","description":"x","inputs":{"repo":"org/app","base_url":"http://localhost:3000"}},
+                              {"mode":"custom","tracks":["criteria","build","unit","functional","perf","security","coverage","delivery"]},max_iters=90))
+          st={}
+          for e in ev:
+              if e.get("type")=="node": st.update(e.get("update",{}))
+          status=[e for e in ev if e.get("type")=="done"][-1]["status"]
+          gates=[(g["gate"],g["verdict"]) for g in st.get("gate_decisions",[])]
+          print("status:",status,"gates:",gates)
+          assert status=="done", status
+          assert all(v=="pass" for _,v in gates), gates
+          PY
+  extension:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: vscode-extension } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - run: npm run compile
+      - run: npx @vscode/vsce package --no-dependencies

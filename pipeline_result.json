@@ -1,0 +1,139 @@
+{
+  "story": {
+    "id": "DEMO-1",
+    "title": "Invoice status transitions",
+    "description": "As an accountant, I want invoice statuses to move Draft -> Sent -> Paid so that I can track billing. Creating an invoice sets status Draft. Recording a full payment sets status Paid. A customer must be selected before an invoice can be saved."
+  },
+  "acceptance_criteria": {
+    "story_id": "DEMO-1",
+    "criteria": [
+      {
+        "id": "AC-1",
+        "gherkin": "Given I am logged into IDURAR as an admin\nWhen I create a new invoice for customer 'Acme Corp' with one line item of $100\nThen the invoice appears in the invoice list with status 'Draft' and total $100",
+        "priority": "must",
+        "tags": [
+          "invoice"
+        ]
+      },
+      {
+        "id": "AC-2",
+        "gherkin": "Given an invoice exists with status 'Draft'\nWhen I record a full payment against it\nThen the invoice status changes to 'Paid'",
+        "priority": "must",
+        "tags": [
+          "invoice",
+          "payment"
+        ]
+      },
+      {
+        "id": "AC-3",
+        "gherkin": "Given I am on the create invoice form\nWhen I submit without selecting a customer\nThen a validation error 'Customer is required' is shown",
+        "priority": "should",
+        "tags": [
+          "invoice",
+          "validation"
+        ]
+      }
+    ]
+  },
+  "code_artifacts": [
+    {
+      "path": "/Users/mohanram/Documents/Ai testing marketplace/agentic-testing-pipeline/generated/code/invoiceStatus.js",
+      "description": "Invoice status transition helper"
+    },
+    {
+      "path": "/Users/mohanram/Documents/Ai testing marketplace/agentic-testing-pipeline/generated/code/invoiceStatus.test.js",
+      "description": "Jest unit tests"
+    }
+  ],
+  "test_artifacts": [
+    {
+      "type": "playwright",
+      "path": "/Users/mohanram/Documents/Ai testing marketplace/agentic-testing-pipeline/generated/e2e/invoice-create.spec.ts",
+      "covers_ac": [
+        "AC-1",
+        "AC-3"
+      ],
+      "tags": [
+        "@invoice",
+        "@smoke"
+      ]
+    },
+    {
+      "type": "k6",
+      "path": "/Users/mohanram/Documents/Ai testing marketplace/agentic-testing-pipeline/generated/perf/invoice-api.k6.js",
+      "covers_ac": [
+        "AC-1"
+      ],
+      "tags": [
+        "@invoice",
+        "@perf"
+      ]
+    }
+  ],
+  "run_results": [
+    {
+      "run_id": "30883170",
+      "suite": "unit",
+      "passed": 2,
+      "failed": 0,
+      "failures": [],
+      "perf": null
+    },
+    {
+      "run_id": "c571a47e",
+      "suite": "feature",
+      "passed": 3,
+      "failed": 0,
+      "failures": [],
+      "perf": {
+        "p95_ms": 640.0,
+        "error_rate": 0.002
+      }
+    },
+    {
+      "run_id": "f8252188",
+      "suite": "regression",
+      "passed": 14,
+      "failed": 0,
+      "failures": [],
+      "perf": null
+    }
+  ],
+  "gate_decisions": [
+    {
+      "gate": "UNIT",
+      "verdict": "pass",
+      "reason": "all criteria met",
+      "route_to": null,
+      "attempt": 1
+    },
+    {
+      "gate": "QG1",
+      "verdict": "pass",
+      "reason": "all criteria met",
+      "route_to": null,
+      "attempt": 1
+    },
+    {
+      "gate": "QG2",
+      "verdict": "pass",
+      "reason": "all criteria met",
+      "route_to": null,
+      "attempt": 1
+    }
+  ],
+  "regression_tags": [
+    "@invoice",
+    "@regression"
+  ],
+  "attempts": {
+    "generate_code": 1,
+    "generate_ui_scripts": 1
+  },
+  "pr": {
+    "title": "DEMO-1: Invoice status transitions",
+    "body": "## Summary\nImplements invoice status transitions per DEMO-1.\n\n## Acceptance criteria covered\n- AC-1, AC-2, AC-3\n\n## Quality gates\n- Unit: PASS (2/2, coverage 84%)\n- QG1 feature: PASS (smoke 100%, p95 640ms)\n- QG2 regression: PASS (98.6%)",
+    "url": "(stub \u2014 wire GitHub API here)"
+  },
+  "status": "done"
+}

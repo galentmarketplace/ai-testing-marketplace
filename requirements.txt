@@ -1,0 +1,21 @@
+# Core platform
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.0
+python-dotenv>=1.0
+langgraph>=0.2
+
+# LLM provider (Claude)
+anthropic>=0.40
+
+# Encryption for per-project secrets at rest (Fernet)
+cryptography>=42.0
+
+# YAML intent DSL for functional test cases
+PyYAML>=6.0
+
+# MCP server — exposes the marketplace as tools to Copilot / Cursor / Claude Code
+mcp>=1.2
+
+# Security agent: SAST engine (other scanners are optional binaries, detected at runtime)
+semgrep>=1.60
