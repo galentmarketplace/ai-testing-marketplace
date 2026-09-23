@@ -131,7 +131,22 @@ class RunRequest(BaseModel):
     jira: dict | None = None         # server-set transient Jira connection (NOT persisted) — lets agents write cases back
 
 
+# Secrets never leave process memory: everything persisted to the store or streamed to a browser passes
+# through here. Agents still receive the real values via the in-memory config/inputs.
+_SECRET_KEYS = {"token", "github_token", "jira_token", "login_password", "jenkins_token", "password",
+                "secret", "client_secret", "api_key"}
+
+
+def _redact(o):
+    if isinstance(o, dict):
+        return {k: ("***" if (k in _SECRET_KEYS and isinstance(v, str) and v) else _redact(v)) for k, v in o.items()}
+    if isinstance(o, list):
+        return [_redact(v) for v in o]
+    return o
+
+
 def _sse(event: str, data: dict) -> str:
+    data = _redact(data)  # never stream secrets
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
 
@@ -201,8 +216,8 @@ def _execute_run(run_id: str, req: RunRequest, github_token: str | None):
         config["jira"] = req.jira   # transient — lets the Functional Case agent store cases back in Jira
 
     seq = 0
-    store.append_event(run_id, seq, "start", {"story": story, "nodes": NODE_META, "mock": req.mock,
-                                              "agentic": True, "config": config, "manifest": MANIFEST})
+    store.append_event(run_id, seq, "start", _redact({"story": story, "nodes": NODE_META, "mock": req.mock,
+                                              "agentic": True, "config": config, "manifest": MANIFEST}))
     seq += 1
     store.set_status(run_id, "running")
     final = "done"
@@ -218,7 +233,7 @@ def _execute_run(run_id: str, req: RunRequest, github_token: str | None):
                 payload = {"ok": True, "status": final}
             else:
                 payload = ev
-            store.append_event(run_id, seq, kind, payload)
+            store.append_event(run_id, seq, kind, _redact(payload))
             seq += 1
         store.finish_run(run_id, final, {"status": final})
     except Exception as exc:  # persist the error so a reconnecting client sees it
@@ -263,7 +278,7 @@ def run(req: RunRequest, request: Request):
 
     run_id = uuid.uuid4().hex
     flow = (req.story or {}).get("title") or req.mode
-    store.create_run(run_id, login, flow, req.mode, req.tracks, req.inputs, req.story)
+    store.create_run(run_id, login, flow, req.mode, req.tracks, _redact(req.inputs), _redact(req.story))
     threading.Thread(target=_execute_run, args=(run_id, req, token), daemon=True).start()
     return {"run_id": run_id, "status": "running"}
 

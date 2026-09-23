@@ -69,12 +69,14 @@ def list_projects(base: str, email: str, token: str) -> list[dict]:
 
 
 def list_issues(base: str, email: str, token: str, project_key: str, limit: int = 25) -> list[dict]:
+    """Issues in a project. Uses the current `/search/jql` endpoint — Atlassian removed `/rest/api/3/search`
+    (HTTP 410 Gone). The new API pages with `nextPageToken` and returns only the requested `fields`."""
     jql = urllib.parse.quote(f"project = {project_key} ORDER BY updated DESC")
-    r = _req(base, f"/rest/api/3/search?jql={jql}&maxResults={limit}&fields=summary,issuetype,status,priority",
+    r = _req(base, f"/rest/api/3/search/jql?jql={jql}&maxResults={limit}&fields=summary,issuetype,status,priority",
              email, token)
-    return [{"key": i["key"], "summary": i["fields"].get("summary", ""),
-             "type": (i["fields"].get("issuetype") or {}).get("name", ""),
-             "status": (i["fields"].get("status") or {}).get("name", "")}
+    return [{"key": i["key"], "summary": (i.get("fields") or {}).get("summary", ""),
+             "type": ((i.get("fields") or {}).get("issuetype") or {}).get("name", ""),
+             "status": ((i.get("fields") or {}).get("status") or {}).get("name", "")}
             for i in r.get("issues", [])]
 
 
@@ -90,7 +92,16 @@ def add_comment(base: str, email: str, token: str, key: str, text: str) -> None:
 
 
 def _subtask_type(base: str, email: str, token: str, project_key: str) -> str | None:
+    """Name of the project's sub-task issue type. Primary: the stable `GET /project/{key}` (lists
+    `issueTypes` with a `subtask` flag). Fallback: the deprecated legacy createmeta, for old sites."""
     try:
+        proj = _req(base, f"/rest/api/3/project/{project_key}", email, token)
+        for it in proj.get("issueTypes", []) or []:
+            if it.get("subtask"):
+                return it["name"]
+    except Exception:
+        pass
+    try:  # legacy fallback (deprecated; may return 410 on current Jira Cloud)
         meta = _req(base, f"/rest/api/3/issue/createmeta?projectKeys={project_key}&expand=projects.issuetypes",
                     email, token)
         for p in meta.get("projects", []):

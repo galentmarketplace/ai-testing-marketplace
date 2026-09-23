@@ -66,4 +66,8 @@ def prescreen(state: PipelineState) -> dict:
     raw = state.get("run_config") or {}
     cfg = _resolve(raw)
     print(f"  [Prescreen] {cfg.mode} -> tracks={cfg.tracks} entry={cfg.entry} pr={cfg.open_pr}")
-    return {"run_config": cfg.model_dump(by_alias=True)}
+    # Preserve transient, non-RunConfig keys the server attached (e.g. the Jira connection used to store
+    # cases / results back on the ticket, the GitHub token) — resolved fields win, extras survive.
+    resolved = cfg.model_dump(by_alias=True)
+    extras = {k: v for k, v in raw.items() if k not in resolved and k not in ("mode", "tracks", "entry", "open_pr")}
+    return {"run_config": {**extras, **resolved}}
