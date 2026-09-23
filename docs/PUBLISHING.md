@@ -10,8 +10,7 @@ DevOps/Marketplace and surface it as a bare **404** after sign-in. Use an incogn
 1. **Azure DevOps identity FIRST** — https://aex.dev.azure.com/signup → sign in → *Create new organization*
    (any name; it only hosts the token). Visiting the publisher page before this exists can 404.
 2. **Create the publisher** — https://marketplace.visualstudio.com/manage → left pane → **Create publisher**
-   → ID **`ai-testing-marketplace`** (permanent; must match `publisher` in `vscode-extension/package.json`
-   — if taken, choose another and update that field) · Name *AI Testing Marketplace*.
+   → ID **`AITestingMarketplace`** (permanent; must match `publisher` in `vscode-extension/package.json`) · Name *AI Testing Marketplace*.
 3. **Create the PAT** — in that Azure DevOps org: user settings (top-right) → *Personal access tokens* →
    *New Token* → Organization **All accessible organizations** (not a single org, or publishing fails) →
    Scopes **Custom defined → Marketplace → Manage** → Create → copy once.
@@ -26,7 +25,7 @@ DevOps/Marketplace and surface it as a bare **404** after sign-in. Use an incogn
 ```bash
 cd vscode-extension
 npm ci && npm run compile
-npx @vscode/vsce login ai-testing-marketplace      # paste the PAT once
+npx @vscode/vsce login AITestingMarketplace         # paste the PAT once
 npm run publish                                    # → live on the Marketplace in ~5 minutes
 ```
 Or via CI: add the PAT as repo secret **`VSCE_PAT`** (and optionally **`OVSX_PAT`** from
