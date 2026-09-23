@@ -8,11 +8,11 @@ artifacts but marked unverified — never presented as green. Generated files ne
 working tree: they go to generated/coverage/tests/ (and only into OUR clone for verification).
 """
 import json
-import os
 import shutil
 import subprocess
 from pathlib import Path
 
+from .. import runctx
 from ..config import GENERATED_DIR
 from ..integration import go_coverage as gocov
 from ..llm import call_llm_json
@@ -69,7 +69,7 @@ def generate_go_tests(state: PipelineState) -> dict:
     if not rep.get("ok") or not uncovered:
         print("  [Go Test Gen] nothing to do — coverage not measured or no uncovered functions")
         return {}
-    mock = os.environ.get("MOCK_LLM") == "1"
+    mock = runctx.is_mock()
     root = Path(rep.get("module_dir") or "") if not mock else None
     targets = uncovered[:8]
 

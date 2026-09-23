@@ -21,6 +21,8 @@ import re
 import urllib.error
 import urllib.request
 
+from . import runctx
+
 # provider -> (base_url, api-key env var or None, default model)
 _OPENAI_COMPAT = {
     "groq":       ("https://api.groq.com/openai/v1", "GROQ_API_KEY", "llama-3.3-70b-versatile"),
@@ -92,7 +94,7 @@ def _call_openai_compatible(provider: str, system: str, user: str, max_tokens: i
 
 def call_llm(agent_name: str, system: str, user: str, max_tokens: int = 4000) -> str:
     """Return the raw text of the model response (routed to the configured provider)."""
-    if os.environ.get("MOCK_LLM") == "1":
+    if runctx.is_mock():
         return _mock_response(agent_name)
     p = _provider()
     if p == "anthropic":

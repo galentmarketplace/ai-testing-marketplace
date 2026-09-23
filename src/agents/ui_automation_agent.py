@@ -20,6 +20,7 @@ import os
 import subprocess
 from pathlib import Path
 
+from .. import runctx
 from ..config import GENERATED_DIR, PROJECT_ROOT
 from ..llm import call_llm_json
 from ..state import PipelineState, TestArtifact
@@ -169,7 +170,7 @@ def generate_ui_scripts(state: PipelineState) -> dict:
             explore.append(r)
     explore = explore[:4]                                # cap for prompt size + exploration time
     # Mock runs use the canned spec — don't launch a browser / require the app to be up.
-    snaps = [] if os.environ.get("MOCK_LLM") == "1" else \
+    snaps = [] if runctx.is_mock() else \
         [s for s in _explore(base, explore, user_email, user_pass, login_route) if s.get("elements")]
     dom = "\n\n".join(_format_dom(s) for s in snaps) or "(live DOM unavailable — infer resilient locators.)"
     context = [

@@ -19,6 +19,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from .. import runctx
 from ..config import GENERATED_DIR, PROJECT_ROOT
 from ..llm import call_llm_json
 from ..state import PipelineState, TestArtifact
@@ -189,7 +190,7 @@ def generate_perf_scripts(state: PipelineState) -> dict:
 
     # BROWSER dimension: Core Web Vitals against the running web app (advisory, real path only).
     base_web = inp.get("base_url")
-    if base_web and os.environ.get("MOCK_LLM") != "1":
+    if base_web and not runctx.is_mock():
         vitals = _capture_web_vitals(base_web.rstrip("/"))
         if vitals:
             rep = _vitals_report(vitals)

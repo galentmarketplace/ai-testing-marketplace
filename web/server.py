@@ -27,6 +27,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
+from src import runctx
 from src.config import GENERATED_DIR
 from src.graph import build_graph
 from src.integration import github as gh
@@ -153,10 +154,7 @@ def _sse(event: str, data: dict) -> str:
 def _pipeline_events(req: RunRequest):
     """Generator yielding SSE frames as the LangGraph pipeline executes."""
     # MOCK_LLM is read per-call inside src.llm, so setting it here is enough.
-    if req.mock:
-        os.environ["MOCK_LLM"] = "1"
-    else:
-        os.environ.pop("MOCK_LLM", None)
+    runctx.set_run_context(mock=req.mock)
 
     story = req.story or DEFAULT_STORY
     yield _sse("start", {"story": story, "nodes": NODE_META, "mock": req.mock})
@@ -186,17 +184,12 @@ def _pipeline_events(req: RunRequest):
 def _execute_run(run_id: str, req: RunRequest, github_token: str | None):
     """Run the orchestrator to completion IN THE BACKGROUND, persisting every event to the
     store. Decoupled from any browser connection, so a refresh/disconnect never aborts it."""
-    if req.mock:
-        os.environ["MOCK_LLM"] = "1"
-    else:
-        os.environ.pop("MOCK_LLM", None)
+    # Per-run context (NOT process env): mock/fail-gate demo knobs are bound to THIS worker thread only,
+    # so a mock run can never flip a concurrent live run into mock (or vice versa).
     _GATE_TO_SUITE = {"unit": "unit", "UNIT": "unit", "feature": "feature", "QG1": "feature",
                       "regression": "regression", "QG2": "regression", "all": "all"}
     val = _GATE_TO_SUITE.get(req.fail_gate) if req.fail_gate else None
-    if val:
-        os.environ["DEMO_FAIL_SUITE"] = val
-    else:
-        os.environ.pop("DEMO_FAIL_SUITE", None)
+    runctx.set_run_context(mock=req.mock, fail_suite=val, run_id=run_id)
 
     story = req.story or DEFAULT_STORY
     if req.inputs:

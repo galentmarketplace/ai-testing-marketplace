@@ -10,8 +10,8 @@ inputs.coverage_blocking=yes to fail the COVERAGE gate below the threshold. Neve
 (there is no Go test generator yet — that is the EarlyAI-style phase 2).
 """
 import json
-import os
 
+from .. import runctx
 from ..config import GATE_POLICY, GENERATED_DIR
 from ..integration import go_coverage as gocov
 from ..integration import reports
@@ -60,7 +60,7 @@ def go_coverage(state: PipelineState) -> dict:
     repo = inp.get("source_repo") or inp.get("repo") or "repo"
     min_pct = _min_pct(inp)
 
-    if os.environ.get("MOCK_LLM") == "1":
+    if runctx.is_mock():
         rep = dict(_MOCK)
     else:
         path = _repo_path(state)

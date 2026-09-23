@@ -12,16 +12,16 @@ restore a faithful assertion or mark the case test.fixme (product mismatch), nev
 
 This is what "oracle-gated" means: a heal is accepted only if the test still verifies the AC.
 """
-import os
 import re
 from pathlib import Path
 
+from .. import runctx
 from ..state import PipelineState
 
 
 def oracle_check(state: PipelineState) -> dict:
     # Mock runs are deterministic/simulated — no real spec to audit; never gate them.
-    if os.environ.get("MOCK_LLM") == "1":
+    if runctx.is_mock():
         return {}
     cases = state.get("functional_cases") or []
     if not cases:

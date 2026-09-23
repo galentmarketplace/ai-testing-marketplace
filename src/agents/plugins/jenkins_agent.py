@@ -21,6 +21,7 @@ the job name(s): JENKINS_UI_JOB (or JENKINS_JOB), optional JENKINS_REGRESSION_JO
 import os
 from pathlib import Path
 
+from ... import runctx
 from ...integration import github, jenkins
 from ...llm import call_llm_json
 from ...registry import AgentSpec, DisplayNode
@@ -101,7 +102,7 @@ def run_jenkins(state: PipelineState) -> dict:
                 "attempts": attempts}
 
     # Mock mode: don't hit a real Jenkins — simulate a green CI run so demos complete cleanly.
-    if os.environ.get("MOCK_LLM"):
+    if runctx.is_mock():
         n = attempts["run_jenkins"]
         passed = 3 if n >= 2 else 2   # first attempt "red", self-heal, then green (shows the loop)
         failed = 0 if n >= 2 else 1

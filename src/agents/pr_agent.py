@@ -9,10 +9,10 @@
 
 Both fall back to a draft when GitHub isn't connected or no destination is configured.
 """
-import os
 import uuid
 from pathlib import Path
 
+from .. import runctx
 from ..integration import github, scaffold
 from ..llm import call_llm_json
 from ..state import PipelineState
@@ -65,7 +65,7 @@ def push_branch(state: PipelineState) -> dict:
     new_repo = inp.get("new_repo")
 
     # Mock runs are fully simulated — never touch GitHub (no repo, branch, or PR side-effects).
-    if os.environ.get("MOCK_LLM"):
+    if runctx.is_mock():
         print("  [Delivery] mock run — skipping GitHub (no branch pushed)")
         return {"pr": {"status": "mock", "has_automation": True,
                        "url": "(mock run — no branch pushed, no PR opened)"}}
@@ -147,7 +147,7 @@ def open_pr(state: PipelineState) -> dict:
     draft = _draft(state)
 
     # Mock runs never open a real PR — show a drafted title/body only.
-    if os.environ.get("MOCK_LLM"):
+    if runctx.is_mock():
         print("  [PR Agent] mock run — PR drafted, not opened")
         return {"pr": {**pr, **draft, "url": "(mock run — PR not opened)", "mock": True}, "status": "done"}
 

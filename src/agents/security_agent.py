@@ -9,8 +9,8 @@ not "self-healed" away. So this capability:
                              delivered). It never loops — it reports risk, it doesn't block.
 """
 import json
-import os
 
+from .. import runctx
 from ..config import GENERATED_DIR
 from ..integration import security_scan
 from ..integration.repo_analyzer import _ensure_local
@@ -90,7 +90,7 @@ def run_security_scan(state: PipelineState) -> dict:
     """Run Semgrep over the whole repo and write the report (simulated under MOCK_LLM)."""
     repo = (state.get("story", {}).get("inputs", {}) or {}).get("source_repo") \
         or (state.get("story", {}).get("inputs", {}) or {}).get("repo") or "repo"
-    if os.environ.get("MOCK_LLM") == "1":
+    if runctx.is_mock():
         report = dict(_MOCK_REPORT)
     else:
         path = _repo_path(state)

@@ -12,18 +12,9 @@ import re
 import uuid
 from pathlib import Path
 
+from .. import runctx
 from ..config import GENERATED_DIR, PROJECT_ROOT
 from ..state import Failure, PerfMetrics, PipelineState, RunResult
-
-
-def _fail_suites() -> set:
-    """Suites to force-fail once, from DEMO_FAIL_SUITE (one | comma-list | 'all')."""
-    v = os.environ.get("DEMO_FAIL_SUITE", "").strip()
-    if not v:
-        return set()
-    if v == "all":
-        return {"unit", "feature", "regression"}
-    return {s.strip() for s in v.split(",") if s.strip()}
 
 
 def _sim_pods(state: PipelineState | None):
@@ -243,14 +234,14 @@ def run_suite(suite: str, state: PipelineState) -> dict:
     """Execute a suite and append the RunResult to state."""
     # A MOCK run is always simulated — even when the server has REAL_RUNNER=1 for live runs —
     # so the demo/full flow is deterministic and has no external side-effects.
-    if os.environ.get("REAL_RUNNER") == "1" and os.environ.get("MOCK_LLM") != "1":
+    if runctx.real_runner() and not runctx.is_mock():
         result = _run_real(suite, state)
     else:
         # DEMO_FAIL_SUITE makes the named suite(s) fail on their FIRST run only, so the
         # orchestrator loops back once, the responsible agent "fixes" it, and the retry passes.
         # Value may be one suite, a comma-list, or "all" (unit,feature,regression).
         prior_runs = sum(1 for r in state.get("run_results", []) if r["suite"] == suite)
-        fail = suite in _fail_suites() and prior_runs == 0
+        fail = suite in runctx.fail_suites() and prior_runs == 0
         result = _simulate(suite, fail=fail, state=state)
 
     print(f"  [Runner] {suite}: {result.passed} passed / {result.failed} failed"
