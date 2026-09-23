@@ -29,7 +29,7 @@ spec:
       serviceAccountName: marketplace   # grants read-only pods + pod-metrics access
       containers:
         - name: marketplace
-          image: ghcr.io/OWNER/ai-testing-marketplace:latest   # ← set your registry/tag
+          image: ghcr.io/galentmarketplace/ai-testing-marketplace:latest   # built by .github/workflows/build-image.yml
           imagePullPolicy: IfNotPresent
           ports: [{ containerPort: 8090, name: http }]
           envFrom:

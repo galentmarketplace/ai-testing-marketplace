@@ -10,7 +10,7 @@ license, CI). Two things only the account owner can do — then it's one command
 2. **Create a Personal Access Token** at https://dev.azure.com → User settings → Personal access tokens →
    *New Token*: Organization **All accessible organizations**, Scopes → **Marketplace: Manage**. Copy it.
 3. **Push the code to the public repo** referenced in `package.json`
-   (`https://github.com/aiqalearning/ai-testing-marketplace`) — the Marketplace links README/issues there.
+   (`https://github.com/galentmarketplace/ai-testing-marketplace`) — the Marketplace links README/issues there.
 
 ## Publish
 ```bash

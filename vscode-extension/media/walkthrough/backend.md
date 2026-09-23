@@ -3,7 +3,7 @@ The extension talks to the **AI Testing Marketplace** platform over HTTP.
 
 **Option A — run it locally**
 ```bash
-git clone https://github.com/aiqalearning/ai-testing-marketplace
+git clone https://github.com/galentmarketplace/ai-testing-marketplace
 cd agentic-testing-pipeline && python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && cp .env.example .env   # add your LLM key
 PORT=8090 python -m web.server

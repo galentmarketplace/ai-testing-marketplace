@@ -50,8 +50,8 @@ kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/late
 kubectl top pod -A          # must return numbers before per-pod perf works
 
 # 3. build & push the platform image
-docker build -t ghcr.io/OWNER/ai-testing-marketplace:0.1.0 .
-docker push ghcr.io/OWNER/ai-testing-marketplace:0.1.0
+docker build -t ghcr.io/galentmarketplace/ai-testing-marketplace:0.1.0 .
+docker push ghcr.io/galentmarketplace/ai-testing-marketplace:0.1.0
 #    then set that image in deploy/k8s/30-platform.yaml
 
 # 4. secrets from your .env (never commit a filled Secret)
