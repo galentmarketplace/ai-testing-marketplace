@@ -943,6 +943,16 @@
       </div>
     </div>
   </div>
+
+    <div class="cardx" id="tokensCard" style="margin-top:22px">
+      <div class="h">API tokens <span class="tag">for the VS Code extension · MCP · CI</span></div>
+      <div class="b">
+        <p class="fhelp" style="margin:0 0 10px">A token authenticates the extension and the MCP server as <b>you</b>. It is shown once — paste it into <i>ATM: Set API token</i> in VS Code. Revoke any you no longer use.</p>
+        <div id="tokenNew" style="display:none" class="cfg-provides"></div>
+        <div id="tokenList" class="fhelp">Loading…</div>
+        <div style="margin-top:10px"><button class="ghost" id="tokenCreate" type="button">＋ Create token</button></div>
+      </div>
+    </div>
 </section>
 
 <!-- ========== VIEW · RUNS (history) ========== -->
@@ -1302,6 +1312,18 @@ function stepNode(d){
   log(d.node,`<b>${escapeHtml(d.label)}</b> — ${escapeHtml(ids.map(i=>nodes[i]?._status.textContent).filter(Boolean).join(' · ')||'…')}`);
 }
 
+// ---- Auth: every /api call needs a principal. On 401 the session is gone → show the sign-in view. ----
+(function(){
+  const _fetch = window.fetch.bind(window);
+  const PUBLIC = ['/api/manifest', '/api/default-story', '/api/github/status'];
+  window.fetch = async function(url, opts){
+    const r = await _fetch(url, opts);
+    if(r.status === 401 && typeof url === 'string' && url.startsWith('/api/') && !PUBLIC.some(p => url.startsWith(p))){
+      try{ document.body.classList.remove('has-sidebar'); showView('login'); }catch(e){}
+    }
+    return r;
+  };
+})();
 // ============ Application navigation: Flows → Configure → Execution → Results ============
 const VIEW_DISPLAY = {login:'block', home:'block', flows:'block', config:'block', run:'grid', results:'block', runs:'block', agents:'block', projects:'block'};
 const VIEW_TITLE = {login:'AI Testing Marketplace', home:'Home', flows:'Playbooks', config:'Configure', run:'Execution', results:'Results', runs:'Runs', agents:'Agents', projects:'Configuration'};
@@ -1985,7 +2007,35 @@ $('homeAllRuns').addEventListener('click', ()=> showView('runs'));
 let PROJECTS=[], EDITING=null;
 const PF = ['name','jira_url','jira_email','jira_token','app_url','login_url','login_user','login_password','source_repo','dest_repo','jenkins_url','jenkins_job','jenkins_token'];
 const SECRETS = ['jira_token','login_password','jenkins_token'];
-function loadProjects(){ fetch('/api/projects').then(r=>r.json()).then(d=>{ PROJECTS=d.projects||[]; renderProjectList(); }).catch(()=>{}); }
+
+// ---- API tokens (Configuration view) ----
+function fmtWhen(t){ return t ? new Date(t*1000).toLocaleString() : 'never'; }
+function loadTokens(){
+  const box=$('tokenList'); if(!box) return;
+  fetch('/api/tokens').then(r=>r.json()).then(d=>{
+    const ts=d.tokens||[];
+    box.innerHTML = ts.length ? ts.map(t=>`<div style="display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
+        <b>${escapeHtml(t.name||'token')}</b><span class="mono" style="color:var(--muted)">${t.id}</span>
+        <span style="color:var(--muted)">created ${fmtWhen(t.created_at)} · last used ${fmtWhen(t.last_used_at)}</span>
+        <button class="cfg-btn" data-revoke="${t.id}" type="button" style="margin-left:auto">Revoke</button></div>`).join('')
+      : 'No tokens yet.';
+    box.querySelectorAll('[data-revoke]').forEach(b=> b.addEventListener('click', ()=>{
+      if(!confirm('Revoke this token? Anything using it stops working immediately.')) return;
+      fetch('/api/tokens/'+b.dataset.revoke,{method:'DELETE'}).then(loadTokens);
+    }));
+  }).catch(()=>{ box.textContent='Could not load tokens.'; });
+}
+if($('tokenCreate')) $('tokenCreate').addEventListener('click', async ()=>{
+  const name = prompt('Name this token (e.g. "vscode-laptop")', 'vscode'); if(name===null) return;
+  const r = await fetch('/api/tokens',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+  const d = await r.json();
+  if(!r.ok){ alert(d.detail||'Could not create token'); return; }
+  const nb=$('tokenNew'); nb.style.display='flex';
+  nb.innerHTML = `<span class="lead">Copy now — shown once:</span><code class="mono" style="user-select:all;word-break:break-all">${escapeHtml(d.token)}</code>`;
+  loadTokens();
+});
+function loadProjects(){
+  loadTokens(); fetch('/api/projects').then(r=>r.json()).then(d=>{ PROJECTS=d.projects||[]; renderProjectList(); }).catch(()=>{}); }
 function renderProjectList(){
   const el=$('projList'); if(!el) return;
   el.innerHTML = PROJECTS.length ? PROJECTS.map(p=>{ const c=p.config||{};

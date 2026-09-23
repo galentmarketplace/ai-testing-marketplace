@@ -4,20 +4,29 @@ The agent-native distribution pattern: instead of a human clicking a UI, a codin
 marketplace as TOOLS — list playbooks/agents, start a run against a saved Configuration + Jira ticket,
 poll status, and read the folded results (gates, PR, Jenkins). "Verify as you build."
 
-Run (stdio):   python -m src.mcp_server
-Register:      claude mcp add ai-testing-marketplace -- python -m src.mcp_server
-Env:           ATM_URL (default http://127.0.0.1:8090) — the running marketplace backend.
+Run (stdio):   ATM_TOKEN=atm_... python -m src.mcp_server
+Register:      claude mcp add ai-testing-marketplace -e ATM_TOKEN=atm_... -- python -m src.mcp_server
+Env:           ATM_URL   (default http://127.0.0.1:8090) — the running marketplace backend.
+               ATM_TOKEN — an API token minted in the dashboard (Configuration → API tokens), or the
+                           deployment's ATM_API_TOKEN service token. Every call goes through the
+                           authenticated REST API; this process never touches the database.
 """
 import json
 import os
-import sys
+import urllib.error
 import urllib.request
-from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # so `web.store` resolves when run as a module
 ATM = os.environ.get("ATM_URL", "http://127.0.0.1:8090").rstrip("/")
+TOKEN = os.environ.get("ATM_TOKEN", "")
+
+
+def _headers() -> dict:
+    h = {"Content-Type": "application/json"}
+    if TOKEN:
+        h["Authorization"] = f"Bearer {TOKEN}"
+    return h
 mcp = FastMCP("ai-testing-marketplace")
 
 # Mirrors the Playbooks in the UI (flow id -> run mode/tracks).
@@ -32,16 +41,24 @@ PLAYBOOKS = {
 }
 
 
+def _call(path: str, body: dict | None = None, method: str = "GET"):
+    req = urllib.request.Request(ATM + path, data=json.dumps(body).encode() if body is not None else None,
+                                 headers=_headers(), method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return {"error": "unauthorized — set ATM_TOKEN to an API token (dashboard → Configuration → API tokens)"}
+        return {"error": f"HTTP {e.code} on {path}: {e.read().decode()[:300]}"}
+
+
 def _get(path: str):
-    with urllib.request.urlopen(ATM + path, timeout=30) as r:
-        return json.loads(r.read())
+    return _call(path)
 
 
 def _post(path: str, body: dict):
-    req = urllib.request.Request(ATM + path, data=json.dumps(body).encode(),
-                                 headers={"Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return json.loads(r.read())
+    return _call(path, body, "POST")
 
 
 @mcp.tool()
@@ -53,16 +70,21 @@ def list_playbooks() -> dict:
 @mcp.tool()
 def list_agents() -> list:
     """Every agent capability in the marketplace (id, label, category, what it produces)."""
-    return [{k: a.get(k) for k in ("id", "label", "category", "kind", "produces")}
-            for a in _get("/api/manifest").get("agents", [])]
+    r = _get("/api/manifest")
+    if "error" in r:
+        return [r]
+    return [{k: a.get(k) for k in ("id", "label", "category", "kind", "produces")} for a in r.get("agents", [])]
 
 
 @mcp.tool()
 def list_configurations() -> list:
     """Saved Configurations (Jira + app + repos + Jenkins; secrets redacted) usable as a run target."""
+    r = _get("/api/projects")
+    if "error" in r:
+        return [r]          # surface "unauthorized — set ATM_TOKEN" instead of an empty list
     return [{"id": p["id"], "name": p["name"], "app_url": p["config"].get("app_url"),
              "source_repo": p["config"].get("source_repo"), "jira": bool(p["config"].get("jira_url"))}
-            for p in _get("/api/projects").get("projects", [])]
+            for p in r.get("projects", [])]
 
 
 @mcp.tool()
@@ -93,40 +115,17 @@ def start_run(playbook: str = "functional", ticket: str | None = None, configura
 @mcp.tool()
 def run_status(run_id: str) -> dict:
     """Current status of a run (queued|running|done|blocked|error) + its flow/mode/timestamps."""
-    from web import store
-    r = store.get_run(run_id)
-    if not r:
-        return {"error": "run not found"}
+    r = _get(f"/api/runs/{run_id}")
+    if "error" in r:
+        return r
     return {k: r.get(k) for k in ("id", "status", "flow", "mode", "created_at", "updated_at", "tracks")}
 
 
 @mcp.tool()
 def run_results(run_id: str) -> dict:
-    """Folded results: gate verdicts (+checks), PR url, Jenkins result, functional cases, artifacts, Jira report."""
-    from web import store
-    r = store.get_run(run_id)
-    if not r:
-        return {"error": "run not found"}
-    st, nodes = {}, []
-    for e in store.events_after(run_id, 0):
-        try:
-            p = json.loads(e["payload"]) if isinstance(e["payload"], str) else e["payload"]
-        except Exception:
-            continue
-        if e["type"] == "node":
-            nodes.append(p.get("node"))
-            st.update(p.get("update") or {})
-    gates = [{"gate": g["gate"], "verdict": g["verdict"], "reason": g.get("reason"),
-              "checks": [{"label": c["label"], "ok": c["ok"]} for c in g.get("checks", [])]}
-             for g in st.get("gate_decisions", [])]
-    arts = [a.get("path") for k in ("test_artifacts", "security_artifacts", "functional_artifacts")
-            for a in st.get(k, []) if a.get("path")]
-    return {"status": r.get("status"), "agents_run": nodes, "gates": gates,
-            "pr": (st.get("pr") or {}).get("url"), "jenkins": st.get("jenkins_report"),
-            "functional_cases": len(st.get("functional_cases") or []),
-            "security": {k: st["security_report"].get(k) for k in ("total", "by_severity", "methodologies_run")}
-                        if st.get("security_report") else None,
-            "artifacts": arts[:40], "jira_reported": st.get("jira_reported")}
+    """Folded results: gate verdicts (+checks), PR url, Jenkins result, functional cases, security and
+    coverage summaries, artifacts, Jira report — computed server-side under the caller's authorization."""
+    return _get(f"/api/runs/{run_id}/summary")
 
 
 if __name__ == "__main__":

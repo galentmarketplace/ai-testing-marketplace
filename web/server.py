@@ -11,6 +11,7 @@ Run it:
 
 Then open http://127.0.0.1:8000
 """
+import hmac
 import json
 import os
 import secrets
@@ -23,7 +24,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -52,6 +53,12 @@ SESSIONS: dict[str, dict] = {}   # sid -> {token, login, avatar} (in-memory cach
 for _s in store.all_sessions():   # restore logins across restarts
     SESSIONS[_s["sid"]] = {"token": _s["token"], "login": _s["login"], "avatar": _s["avatar"]}
 OAUTH_STATES: set[str] = set()
+# Authorization model (Phase 0.1): every /api/* route needs a principal — a browser session OR a bearer
+# API token. Admins (ATM_ADMIN_LOGINS) see every row, incl. legacy owner-less ones. ATM_API_TOKEN is an
+# optional bootstrap service token for headless deployments (CI, the MCP server) and counts as admin.
+ADMINS = {x.strip() for x in os.environ.get("ATM_ADMIN_LOGINS", "").split(",") if x.strip()}
+ENV_TOKEN = os.environ.get("ATM_API_TOKEN") or None
+SERVICE_LOGIN = os.environ.get("ATM_SERVICE_LOGIN", "service")
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "")   # e.g. https://xxx.ngrok-free.dev (fixes the OAuth callback)
 
 
@@ -63,6 +70,46 @@ def _redirect_uri(request: Request) -> str:
 def _session(request: Request) -> dict | None:
     sid = request.cookies.get("sid")
     return SESSIONS.get(sid) if sid else None
+
+
+def _principal(request: Request) -> dict | None:
+    """Who is calling: {login, via, admin, token?}. Session cookie first, then `Authorization: Bearer`."""
+    sess = _session(request)
+    if sess and sess.get("login"):
+        return {"login": sess["login"], "via": "session", "admin": sess["login"] in ADMINS, "token": sess.get("token")}
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        presented = auth[7:].strip()
+        if ENV_TOKEN and hmac.compare_digest(presented, ENV_TOKEN):
+            return {"login": SERVICE_LOGIN, "via": "env", "admin": True, "token": None}
+        row = store.resolve_api_token(presented)
+        if row:
+            return {"login": row["login"], "via": "token", "admin": row["login"] in ADMINS, "token": None}
+    return None
+
+
+def require_auth(request: Request) -> dict:
+    p = _principal(request)
+    if not p:
+        raise HTTPException(401, "authentication required: sign in, or send Authorization: Bearer <API token>")
+    return p
+
+
+def _owned(owner_login: str | None, principal: dict) -> bool:
+    return principal["admin"] or (owner_login is not None and owner_login == principal["login"])
+
+
+def _assert_owner_project(project_id: str, principal: dict) -> None:
+    exists, owner = store.project_owner(project_id)
+    if not exists or not _owned(owner, principal):
+        raise HTTPException(404, "project not found")     # never reveal another tenant's ids
+
+
+def _assert_owner_run(run_id: str, principal: dict) -> dict:
+    r = store.get_run(run_id)
+    if not r or not _owned(r.get("login"), principal):
+        raise HTTPException(404, "run not found")
+    return r
 
 
 @app.get("/auth/github/login")
@@ -88,7 +135,8 @@ def gh_callback(request: Request, code: str = "", state: str = ""):
     SESSIONS[sid] = {"token": token, "login": me.get("login"), "avatar": me.get("avatar")}
     store.save_session(sid, token, me.get("login"), me.get("avatar"))   # survive restarts
     resp = RedirectResponse("/")
-    resp.set_cookie("sid", sid, httponly=True, max_age=86400, samesite="lax")
+    resp.set_cookie("sid", sid, httponly=True, max_age=86400, samesite="lax",
+                    secure=PUBLIC_URL.startswith("https"))   # Secure whenever we're served over TLS
     return resp
 
 
@@ -235,19 +283,19 @@ def _execute_run(run_id: str, req: RunRequest, github_token: str | None):
 
 
 @app.post("/api/run")
-def run(req: RunRequest, request: Request):
+def run(req: RunRequest, request: Request, principal: dict = Depends(require_auth)):
     """Start a run and return its id immediately. The run executes in the background and
     streams via GET /api/runs/{id}/stream (reconnectable). Legacy fixed-graph path still
     streams inline."""
-    sess = _session(request)
-    token = sess["token"] if sess else None
-    login = sess["login"] if sess else None
+    token = principal.get("token")            # GitHub OAuth token — session principals only
+    login = principal["login"]
     if not req.agentic:
         return StreamingResponse(_pipeline_events(req), media_type="text/event-stream")
 
     # Run from a saved Project: its config prefills the inputs (secrets decrypted here, never client-side),
     # and a Jira ticket key pulls the acceptance criteria LIVE from Jira (the source of truth).
     if req.project_id:
+        _assert_owner_project(req.project_id, principal)
         p = store.get_project(req.project_id, reveal=True) or {}
         inp = dict(req.inputs or {})
         _MAP = {"base_url": "app_url", "login_url": "login_url", "login_user": "login_user",
@@ -277,9 +325,10 @@ def run(req: RunRequest, request: Request):
 
 
 @app.get("/api/runs/{run_id}/stream")
-def run_stream(run_id: str):
+def run_stream(run_id: str, principal: dict = Depends(require_auth)):
     """Replay all stored events for a run, then tail live until it reaches a terminal state.
     This is what makes refresh/reconnect (and watching an already-finished run) work."""
+    _assert_owner_run(run_id, principal)
     def gen():
         last = -1
         while True:
@@ -310,13 +359,13 @@ class ProjectReq(BaseModel):
 
 
 @app.get("/api/projects")
-def projects_list(request: Request):
-    sess = _session(request)
-    return {"projects": store.list_projects(sess["login"] if sess else None)}
+def projects_list(principal: dict = Depends(require_auth)):
+    return {"projects": store.list_projects(principal["login"], admin=principal["admin"])}
 
 
 @app.get("/api/projects/{project_id}")
-def project_get(project_id: str):
+def project_get(project_id: str, principal: dict = Depends(require_auth)):
+    _assert_owner_project(project_id, principal)
     p = store.get_project(project_id)   # redacted (no secrets)
     if not p:
         raise HTTPException(404, "project not found")
@@ -324,14 +373,16 @@ def project_get(project_id: str):
 
 
 @app.post("/api/projects")
-def project_save(req: ProjectReq, request: Request):
-    sess = _session(request)
-    pid = store.save_project(sess["login"] if sess else None, req.name, req.config, req.id)
+def project_save(req: ProjectReq, principal: dict = Depends(require_auth)):
+    if req.id:
+        _assert_owner_project(req.id, principal)
+    pid = store.save_project(principal["login"], req.name, req.config, req.id)
     return {"id": pid, **(store.get_project(pid) or {})}
 
 
 @app.delete("/api/projects/{project_id}")
-def project_delete(project_id: str):
+def project_delete(project_id: str, principal: dict = Depends(require_auth)):
+    _assert_owner_project(project_id, principal)
     store.delete_project(project_id)
     return {"ok": True}
 
@@ -344,7 +395,7 @@ class JiraTestReq(BaseModel):
 
 
 @app.post("/api/jira/test")
-def jira_test(req: JiraTestReq):
+def jira_test(req: JiraTestReq, principal: dict = Depends(require_auth)):
     try:
         return jira.test_connection(req.jira_url, req.jira_email, req.jira_token)
     except Exception as exc:
@@ -352,7 +403,8 @@ def jira_test(req: JiraTestReq):
 
 
 @app.get("/api/jira/issues")
-def jira_issues(project_id: str, project_key: str):
+def jira_issues(project_id: str, project_key: str, principal: dict = Depends(require_auth)):
+    _assert_owner_project(project_id, principal)
     p = store.get_project(project_id, reveal=True) or {}
     if not (p.get("jira_url") and p.get("jira_email") and p.get("jira_token")):
         raise HTTPException(400, "project has no Jira connection configured")
@@ -363,7 +415,8 @@ def jira_issues(project_id: str, project_key: str):
 
 
 @app.get("/api/jira/issue")
-def jira_issue(project_id: str, key: str):
+def jira_issue(project_id: str, key: str, principal: dict = Depends(require_auth)):
+    _assert_owner_project(project_id, principal)
     p = store.get_project(project_id, reveal=True) or {}
     if not (p.get("jira_url") and p.get("jira_email") and p.get("jira_token")):
         raise HTTPException(400, "project has no Jira connection configured")
@@ -374,22 +427,53 @@ def jira_issue(project_id: str, key: str):
 
 
 @app.get("/api/runs")
-def runs(request: Request):
-    """Recent run history for the signed-in user (or all in PAT/no-auth mode)."""
-    sess = _session(request)
-    return {"runs": store.list_runs(sess["login"] if sess else None)}
+def runs(principal: dict = Depends(require_auth)):
+    """Recent run history for the caller (admins see every run)."""
+    return {"runs": store.list_runs(principal["login"], admin=principal["admin"])}
 
 
 @app.get("/api/runs/{run_id}")
-def run_detail(run_id: str):
-    r = store.get_run(run_id)
-    if not r:
-        raise HTTPException(404, "run not found")
-    return r
+def run_detail(run_id: str, principal: dict = Depends(require_auth)):
+    return _assert_owner_run(run_id, principal)
+
+
+def _fold_run(run_id: str) -> dict:
+    """Fold a run's persisted (already-redacted) events into one results object — the same shape the
+    MCP server and the extension consume, computed server-side so callers never touch the store."""
+    r = store.get_run(run_id) or {}
+    st, nodes = {}, []
+    for e in store.events_after(run_id, 0):
+        try:
+            p = json.loads(e["payload"]) if isinstance(e["payload"], str) else e["payload"]
+        except Exception:
+            continue
+        if e["type"] == "node":
+            nodes.append(p.get("node"))
+            st.update(p.get("update") or {})
+    gates = [{"gate": g["gate"], "verdict": g["verdict"], "reason": g.get("reason"),
+              "checks": [{"label": c["label"], "ok": c["ok"], **({"advisory": True} if c.get("advisory") else {})}
+                         for c in g.get("checks", [])]} for g in st.get("gate_decisions", [])]
+    arts = [a.get("path") for k in ("test_artifacts", "security_artifacts", "functional_artifacts", "coverage_artifacts")
+            for a in st.get(k, []) if a.get("path")]
+    sec = st.get("security_report")
+    return {"run_id": run_id, "status": r.get("status"), "flow": r.get("flow"), "agents_run": nodes, "gates": gates,
+            "pr": (st.get("pr") or {}).get("url"), "jenkins": st.get("jenkins_report"),
+            "functional_cases": len(st.get("functional_cases") or []), "jira_cases": st.get("jira_cases"),
+            "security": {k: sec.get(k) for k in ("total", "by_severity", "methodologies_run")} if sec else None,
+            "coverage": {k: (st.get("coverage_report") or {}).get(k) for k in ("total_pct", "min_pct", "uncovered_funcs")}
+                        if st.get("coverage_report") else None,
+            "artifacts": arts[:40], "jira_reported": st.get("jira_reported")}
+
+
+@app.get("/api/runs/{run_id}/summary")
+def run_summary(run_id: str, principal: dict = Depends(require_auth)):
+    """Folded results for a run (gates + checks, PR, Jenkins, cases, security, coverage, artifacts)."""
+    _assert_owner_run(run_id, principal)
+    return _fold_run(run_id)
 
 
 @app.get("/api/artifact")
-def artifact(path: str):
+def artifact(path: str, principal: dict = Depends(require_auth)):
     """Return the content of a generated artifact file (sandboxed to generated/)."""
     target = Path(path).resolve()
     gen_root = GENERATED_DIR.resolve()
@@ -398,6 +482,38 @@ def artifact(path: str):
     if not target.is_file():
         raise HTTPException(404, "not found")
     return {"path": str(target), "content": target.read_text()}
+
+
+# ---------- Identity + API tokens ----------
+@app.get("/api/me")
+def me(principal: dict = Depends(require_auth)):
+    return {"login": principal["login"], "via": principal["via"], "admin": principal["admin"]}
+
+
+class TokenReq(BaseModel):
+    name: str = "token"
+
+
+@app.post("/api/tokens")
+def token_create(req: TokenReq, principal: dict = Depends(require_auth)):
+    """Mint a bearer API token for the signed-in user (browser session only — a token can't mint tokens).
+    The plaintext is returned exactly once."""
+    if principal["via"] != "session":
+        raise HTTPException(403, "API tokens can only be created from a signed-in browser session")
+    tid, plain = store.create_api_token(principal["login"], req.name)
+    return {"id": tid, "name": req.name, "token": plain}
+
+
+@app.get("/api/tokens")
+def token_list(principal: dict = Depends(require_auth)):
+    return {"tokens": store.list_api_tokens(principal["login"])}
+
+
+@app.delete("/api/tokens/{token_id}")
+def token_delete(token_id: str, principal: dict = Depends(require_auth)):
+    if not store.delete_api_token(principal["login"], token_id):
+        raise HTTPException(404, "token not found")
+    return {"ok": True}
 
 
 @app.get("/api/default-story")

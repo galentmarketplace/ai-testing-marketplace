@@ -87,8 +87,11 @@ Leave the kubeconfig field empty when the platform runs in-cluster.
 - **Jenkins** (optional) — set `JENKINS_URL/USER/TOKEN/UI_JOB`; it must be reachable from the pod.
 
 ## Hardening before real customers
-- TLS at the ingress; the platform has **no auth of its own beyond GitHub OAuth** — don't expose it
-  publicly without it.
+- TLS at the ingress (the session cookie is marked `Secure` automatically when `PUBLIC_URL` is https).
+- **Access control:** every `/api/*` route requires a principal — a GitHub-OAuth browser session or an
+  `Authorization: Bearer` API token. Users mint tokens in the dashboard (Configuration → API tokens);
+  set `ATM_ADMIN_LOGINS` to the operators who may see all tenants, and `ATM_API_TOKEN` only if you need
+  a headless service token (treat it like a root password). Runs and Configurations are owner-scoped.
 - Back up the PVC (see above). Rotate `ANTHROPIC_API_KEY` and any tokens shared in chat.
 - Optional scanners make coverage wider: `gitleaks`, `trivy`, `syft`, `osv-scanner`, `go`
   (add to the Dockerfile; each is auto-detected and reported as "available to enable" when absent).

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.0 — 2026-09-23
+- Authenticates to the platform with a personal API token (VS Code SecretStorage); *ATM: Set API token*.
+- MCP registration prompts for the token (never written to `.vscode/mcp.json`).
+
 ## 0.1.0 — 2026-09-16
 - Sidebar: Playbooks · Configurations · Runs (live status).
 - **Run Playbook…** wizard: saved Configuration → Jira ticket / acceptance criteria → live or mock; status-bar tracking.

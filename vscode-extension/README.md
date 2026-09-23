@@ -19,6 +19,7 @@ This extension is a thin client of the open **AI Testing Marketplace** platform:
 ## Quick start
 1. Install the extension → follow the **Get started** walkthrough (Command Palette: *ATM: Open setup guide*).
 2. Set **Backend URL** (or **Platform Path** + *Start local backend*).
+3. In the platform dashboard, sign in and create a token under **Configuration → API tokens**, then run *ATM: Set API token* (stored in VS Code's secret storage — the backend authorises every call).
 3. *ATM: Run Playbook…* → **Functional** → Configuration → Jira ticket.
 4. *ATM: Register MCP server* to drive it from Copilot/Cursor agent mode.
 
@@ -30,10 +31,10 @@ This extension is a thin client of the open **AI Testing Marketplace** platform:
 | `aiTestingMarketplace.pythonPath` | `python` | Interpreter for backend + MCP server |
 
 ## Commands
-`ATM: Run Playbook…` · `ATM: Open Run Results` · `ATM: Open Dashboard` · `ATM: Refresh` · `ATM: Register MCP server` · `ATM: Show Go coverage overlay (LCOV)` · `ATM: Start local backend` · `ATM: Open setup guide`
+`ATM: Set API token` · `ATM: Run Playbook…` · `ATM: Open Run Results` · `ATM: Open Dashboard` · `ATM: Refresh` · `ATM: Register MCP server` · `ATM: Show Go coverage overlay (LCOV)` · `ATM: Start local backend` · `ATM: Open setup guide`
 
 ## Privacy
-The extension only talks to the backend URL you configure. Credentials (Jira, app logins, Jenkins) live encrypted in the platform's Configurations — never in the extension.
+The extension only talks to the backend URL you configure, authenticated with your personal API token (kept in VS Code SecretStorage, never in settings or files). Credentials (Jira, app logins, Jenkins) live encrypted in the platform's Configurations — never in the extension.
 
 ## License
 MIT

@@ -2,7 +2,7 @@
   "name": "ai-testing-marketplace",
   "displayName": "AI Testing Marketplace",
   "description": "Agentic testing from your editor: run playbooks (Jira \u2192 test cases \u2192 Playwright/k6/security/coverage \u2192 CI \u2192 PR), watch results, overlay Go coverage, and give Copilot/Cursor agent mode the marketplace as tools via MCP.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "AITestingMarketplace",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -72,7 +72,7 @@
     "viewsWelcome": [
       {
         "view": "atm.playbooks",
-        "contents": "Connect to an AI Testing Marketplace backend to see playbooks.\n[Start local backend](command:atm.startBackend)\n[Configure backend URL](command:workbench.action.openSettings?%22aiTestingMarketplace.backendUrl%22)\n[Open setup guide](command:atm.setupGuide)"
+        "contents": "Connect to an AI Testing Marketplace backend to see playbooks.\n[Start local backend](command:atm.startBackend)\n[Configure backend URL](command:workbench.action.openSettings?%22aiTestingMarketplace.backendUrl%22)\n[Open setup guide](command:atm.setupGuide)\n[Set API token](command:atm.setApiToken)"
       }
     ],
     "commands": [
@@ -109,6 +109,10 @@
       {
         "command": "atm.setupGuide",
         "title": "ATM: Open setup guide"
+      },
+      {
+        "command": "atm.setApiToken",
+        "title": "ATM: Set API token"
       }
     ],
     "menus": {
@@ -154,7 +158,7 @@
           {
             "id": "atm.step.backend",
             "title": "Connect a backend",
-            "description": "The extension is a client of the AI Testing Marketplace platform. Run it locally or point to your team's hosted instance.\n[Start local backend](command:atm.startBackend)\n[Configure URL](command:workbench.action.openSettings?%22aiTestingMarketplace.backendUrl%22)",
+            "description": "The extension is a client of the AI Testing Marketplace platform. Run it locally or point to your team's hosted instance.\n[Start local backend](command:atm.startBackend)\n[Configure URL](command:workbench.action.openSettings?%22aiTestingMarketplace.backendUrl%22)\nThen create an API token in the dashboard (Configuration \u2192 API tokens) and store it here:\n[Set API token](command:atm.setApiToken)",
             "media": {
               "markdown": "media/walkthrough/backend.md"
             },

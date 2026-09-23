@@ -9,16 +9,22 @@ Production-grade essentials without a heavy DB dependency:
 SQLite in WAL mode handles our concurrency (background writer thread + SSE reader
 threads). Connections are opened per call and closed promptly.
 """
+import hashlib
 import json
+import os
+import secrets
 import sqlite3
 import threading
 import time
 import uuid
+from pathlib import Path
 
 from src.config import PROJECT_ROOT
 
-DB_PATH = PROJECT_ROOT / "data" / "marketplace.db"
-_KEY_PATH = PROJECT_ROOT / "data" / "secret.key"
+# ATM_DATA_DIR lets deployments (and tests) relocate the state directory.
+DATA_DIR = Path(os.environ.get("ATM_DATA_DIR") or (PROJECT_ROOT / "data"))
+DB_PATH = DATA_DIR / "marketplace.db"
+_KEY_PATH = DATA_DIR / "secret.key"
 _write_lock = threading.Lock()   # serialize writers (SQLite single-writer)
 
 # Fields in a project config that are secrets — encrypted at rest, never returned to the UI.
@@ -76,7 +82,50 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS projects(
             id TEXT PRIMARY KEY, login TEXT, name TEXT, config TEXT, created_at REAL, updated_at REAL);
         CREATE INDEX IF NOT EXISTS idx_projects_login ON projects(login);
+        CREATE TABLE IF NOT EXISTS api_tokens(
+            id TEXT PRIMARY KEY, login TEXT, name TEXT, token_hash TEXT UNIQUE,
+            created_at REAL, last_used_at REAL);
         """)
+
+
+# ---------- API tokens (bearer auth for the VS Code extension / MCP server / CI) ----------
+def _hash_token(plain: str) -> str:
+    return hashlib.sha256(plain.encode()).hexdigest()
+
+
+def create_api_token(login: str, name: str) -> tuple[str, str]:
+    """Mint a token for `login`. Returns (id, plaintext) — the plaintext is shown ONCE and never stored."""
+    plain = "atm_" + secrets.token_urlsafe(32)
+    tid = uuid.uuid4().hex[:12]
+    with _write_lock, _conn() as c:
+        c.execute("INSERT INTO api_tokens(id,login,name,token_hash,created_at,last_used_at) VALUES(?,?,?,?,?,NULL)",
+                  (tid, login, name or "token", _hash_token(plain), time.time()))
+    return tid, plain
+
+
+def resolve_api_token(plain: str) -> dict | None:
+    """Look a presented bearer token up by hash; touch last_used_at."""
+    if not plain or not plain.startswith("atm_"):
+        return None
+    with _conn() as c:
+        r = c.execute("SELECT id, login, name FROM api_tokens WHERE token_hash=?", (_hash_token(plain),)).fetchone()
+    if not r:
+        return None
+    with _write_lock, _conn() as c:
+        c.execute("UPDATE api_tokens SET last_used_at=? WHERE id=?", (time.time(), r["id"]))
+    return dict(r)
+
+
+def list_api_tokens(login: str) -> list[dict]:
+    with _conn() as c:
+        return [dict(r) for r in c.execute(
+            "SELECT id, name, created_at, last_used_at FROM api_tokens WHERE login=? ORDER BY created_at DESC", (login,))]
+
+
+def delete_api_token(login: str, token_id: str) -> bool:
+    with _write_lock, _conn() as c:
+        cur = c.execute("DELETE FROM api_tokens WHERE id=? AND login=?", (token_id, login))
+        return cur.rowcount > 0
 
 
 # ---------- projects (saved, reusable per-project config; secrets encrypted) ----------
@@ -110,10 +159,18 @@ def save_project(login: str | None, name: str, config: dict, project_id: str | N
     return pid
 
 
-def list_projects(login: str | None) -> list[dict]:
+def project_owner(project_id: str) -> tuple[bool, str | None]:
+    """(exists, owner_login) — owner may be None for legacy rows created before auth (admin-only)."""
     with _conn() as c:
-        if login:
-            rows = c.execute("SELECT * FROM projects WHERE login=? OR login IS NULL ORDER BY updated_at DESC", (login,))
+        r = c.execute("SELECT login FROM projects WHERE id=?", (project_id,)).fetchone()
+    return (True, r["login"]) if r else (False, None)
+
+
+def list_projects(login: str | None, admin: bool = False) -> list[dict]:
+    """The caller's own Configurations. Admins see every row (including legacy owner-less ones)."""
+    with _conn() as c:
+        if not admin:
+            rows = c.execute("SELECT * FROM projects WHERE login=? ORDER BY updated_at DESC", (login or "",))
         else:
             rows = c.execute("SELECT * FROM projects ORDER BY updated_at DESC")
         return [{"id": r["id"], "name": r["name"], "updated_at": r["updated_at"],
@@ -152,7 +209,7 @@ def mark_interrupted() -> int:
 def save_session(sid: str, token: str, login: str, avatar: str) -> None:
     with _write_lock, _conn() as c:
         c.execute("INSERT OR REPLACE INTO sessions(sid,token,login,avatar,created_at) VALUES(?,?,?,?,?)",
-                  (sid, token, login, avatar, time.time()))
+                  (sid, encrypt(token), login, avatar, time.time()))   # OAuth token encrypted at rest
 
 
 def delete_session(sid: str) -> None:
@@ -162,7 +219,10 @@ def delete_session(sid: str) -> None:
 
 def all_sessions() -> list[dict]:
     with _conn() as c:
-        return [dict(r) for r in c.execute("SELECT * FROM sessions")]
+        rows = [dict(r) for r in c.execute("SELECT * FROM sessions")]
+    for r in rows:
+        r["token"] = decrypt(r.get("token") or "")   # legacy plaintext rows pass through unchanged
+    return rows
 
 
 # ---------- runs ----------
@@ -217,14 +277,13 @@ def run_status(run_id: str) -> str | None:
         return row["status"] if row else None
 
 
-def list_runs(login: str | None, limit: int = 50) -> list[dict]:
-    """Recent runs for a user (or all when unauthenticated / PAT mode), including the
-    configuration each run was started with (tracks + inputs)."""
+def list_runs(login: str | None, limit: int = 50, admin: bool = False) -> list[dict]:
+    """Recent runs for the caller (admins: every run), including the configuration each run
+    was started with (tracks + inputs)."""
     cols = "rowid AS num, id,login,flow,mode,tracks,inputs,status,created_at,updated_at"
     with _conn() as c:
-        if login:
-            rows = c.execute(f"SELECT {cols} FROM runs WHERE login=? OR login IS NULL "
-                             "ORDER BY rowid DESC LIMIT ?", (login, limit))
+        if not admin:
+            rows = c.execute(f"SELECT {cols} FROM runs WHERE login=? ORDER BY rowid DESC LIMIT ?", (login or "", limit))
         else:
             rows = c.execute(f"SELECT {cols} FROM runs ORDER BY rowid DESC LIMIT ?", (limit,))
         out = []

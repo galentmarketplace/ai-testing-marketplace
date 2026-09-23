@@ -47,7 +47,17 @@ reuse an existing prefix or add a stage.
   nouns (`functional`, `security`, `coverage`); gate names: UPPER (`QG1`, `SEC`, `COVERAGE`).
 * Generated files live under `generated/<domain>/`; never write elsewhere.
 
-## 6. Code standards
+## 6. Access control
+* Every `/api/*` handler takes `principal: dict = Depends(require_auth)`; the only public routes are
+  static metadata (`/api/manifest`, `/api/default-story`, `/api/github/status`).
+* Principals: browser session (GitHub OAuth) → `via=session`; personal API token → `via=token`;
+  `ATM_API_TOKEN` service token → `via=env` (admin). Admins = `ATM_ADMIN_LOGINS`.
+* Owner scoping via `_assert_owner_project` / `_assert_owner_run`; a foreign id returns **404, never 403**
+  (don't reveal another tenant's ids). Legacy owner-less rows are admin-only.
+* Anything leaving the process (store, SSE, logs) passes through `_redact`. Session OAuth tokens and
+  project secrets are Fernet-encrypted at rest.
+
+## 7. Code standards
 * Python: **ruff** (lint + format, `ruff.toml`, line length 120); type hints on public functions;
   docstring on every agent module stating what it grounds against.
 * TypeScript/JS (e2e-runner, vscode-extension): `tsc --strict`; Playwright specs follow the

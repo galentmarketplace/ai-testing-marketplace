@@ -7,9 +7,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.13" }
-      - run: pip install -r requirements.txt ruff
+      - run: pip install -r requirements.txt ruff pytest
       - name: Lint
-        run: ruff check src web
+        run: ruff check src web tests
+      - name: Unit + authz tests
+        run: python -m pytest tests -q
       - name: Registry + plan sanity
         run: python -c "from src.registry import REGISTRY, plan_for; print(len(REGISTRY),'agents'); print([s.id for s in plan_for({'mode':'full'})])"
       - name: Mock end-to-end pipeline (all tracks)

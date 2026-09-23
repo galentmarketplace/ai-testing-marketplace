@@ -20,8 +20,28 @@ const cfg = () => vscode.workspace.getConfiguration('aiTestingMarketplace');
 const backend = () => (cfg().get<string>('backendUrl') || 'http://127.0.0.1:8090').replace(/\/$/, '');
 const platformPath = () => cfg().get<string>('platformPath') || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
 
+// The platform requires a principal on every /api call: the extension authenticates with a personal
+// API token (minted in the dashboard → Configuration → API tokens) kept in VS Code's SecretStorage.
+let API_TOKEN = '';
+let tokenPromptShown = false;
+let EXT_CTX: vscode.ExtensionContext | undefined;
+async function loadToken(ctx: vscode.ExtensionContext) { API_TOKEN = (await ctx.secrets.get('atm.apiToken')) || ''; }
+async function setApiToken(ctx: vscode.ExtensionContext) {
+  const v = await vscode.window.showInputBox({ prompt: 'AI Testing Marketplace API token (dashboard → Configuration → API tokens → Create)', password: true, ignoreFocusOut: true, placeHolder: 'atm_…' });
+  if (v === undefined) return;
+  if (v.trim()) await ctx.secrets.store('atm.apiToken', v.trim()); else await ctx.secrets.delete('atm.apiToken');
+  await loadToken(ctx); tokenPromptShown = false;
+  vscode.window.showInformationMessage(v.trim() ? 'API token saved.' : 'API token cleared.');
+  vscode.commands.executeCommand('atm.refresh');
+}
 async function api<T = any>(p: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(backend() + p, { ...init, headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) } });
+  const r = await fetch(backend() + p, { ...init, headers: { 'Content-Type': 'application/json',
+    ...(API_TOKEN ? { Authorization: `Bearer ${API_TOKEN}` } : {}), ...(init?.headers || {}) } });
+  if (r.status === 401 && !tokenPromptShown && EXT_CTX) {
+    tokenPromptShown = true;
+    vscode.window.showWarningMessage('AI Testing Marketplace: this backend requires an API token.', 'Set API token')
+      .then(a => a && EXT_CTX && setApiToken(EXT_CTX));
+  }
   if (!r.ok) throw new Error(`${p} → HTTP ${r.status}`);
   return r.json() as Promise<T>;
 }
@@ -115,7 +135,8 @@ function pollRun(runId: string, label: string, status: vscode.StatusBarItem) {
 // ---------------------------------------------------------------- MCP registration (agent-native path)
 function mcpServerDef() {
   const cwd = platformPath();
-  return { name: 'ai-testing-marketplace', command: cfg().get<string>('pythonPath') || 'python', args: ['-m', 'src.mcp_server'], cwd, env: { ATM_URL: backend() } };
+  return { name: 'ai-testing-marketplace', command: cfg().get<string>('pythonPath') || 'python', args: ['-m', 'src.mcp_server'], cwd,
+           env: { ATM_URL: backend(), ...(API_TOKEN ? { ATM_TOKEN: API_TOKEN } : {}) } };
 }
 async function registerMcp() {
   const d = mcpServerDef();
@@ -124,7 +145,11 @@ async function registerMcp() {
   const dir = path.join(folder, '.vscode'); fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, 'mcp.json');
   let doc: any = {}; try { doc = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* new */ }
-  doc.servers = { ...(doc.servers || {}), [d.name]: { type: 'stdio', command: d.command, args: d.args, cwd: d.cwd, env: d.env } };
+  // The token never lands in the JSON file: VS Code prompts for it (password input) when the server starts.
+  doc.inputs = [...(doc.inputs || []).filter((i: any) => i.id !== 'atmToken'),
+    { id: 'atmToken', type: 'promptString', description: 'AI Testing Marketplace API token', password: true }];
+  doc.servers = { ...(doc.servers || {}), [d.name]: { type: 'stdio', command: d.command, args: d.args, cwd: d.cwd,
+    env: { ATM_URL: backend(), ATM_TOKEN: '${input:atmToken}' } } };
   fs.writeFileSync(file, JSON.stringify(doc, null, 2));
   vscode.window.showInformationMessage(`MCP server registered in .vscode/mcp.json — Copilot agent mode can now call list_playbooks / start_run / run_results.`);
 }
@@ -205,7 +230,8 @@ async function checkBackend(ctx: vscode.ExtensionContext) {
 }
 
 // ---------------------------------------------------------------- activate
-export function activate(ctx: vscode.ExtensionContext) {
+export async function activate(ctx: vscode.ExtensionContext) {
+  EXT_CTX = ctx; await loadToken(ctx);
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   const playbooks = new ListProvider(async () => Object.entries(PLAYBOOKS).map(([id, p]) =>
     new Item(p.label, { desc: id, tip: p.desc, icon: 'play', cmd: { command: 'atm.runPlaybook', title: 'run', arguments: [id] } })));
@@ -226,6 +252,8 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.commands.registerCommand('atm.registerMcp', registerMcp),
     vscode.commands.registerCommand('atm.showCoverage', showCoverage),
     vscode.commands.registerCommand('atm.startBackend', startBackend),
+    vscode.commands.registerCommand('atm.setApiToken', () => setApiToken(ctx)),
+    ctx.secrets.onDidChange(e => { if (e.key === 'atm.apiToken') loadToken(ctx).then(() => vscode.commands.executeCommand('atm.refresh')); }),
     vscode.commands.registerCommand('atm.setupGuide', () => openSetupGuide(ctx)),
     vscode.languages.registerCodeLensProvider([{ language: 'typescript' }, { language: 'javascript' }], new SpecLens()),
     vscode.window.onDidChangeActiveTextEditor(applyCoverage),

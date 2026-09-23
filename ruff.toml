@@ -12,6 +12,10 @@ ignore = [
   "B904",  # user-facing HTTPException/RuntimeError messages; chaining the original traceback adds noise
 ]
 
+[lint.flake8-bugbear]
+# FastAPI's `param: T = Depends(fn)` is the framework's dependency-injection idiom, not a mutable default.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.params.Depends"]
+
 [lint.per-file-ignores]
 # Imports must follow sys.path setup / lazy provider loading in these entrypoints.
 "web/server.py" = ["E402"]
