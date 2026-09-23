@@ -3,14 +3,24 @@
 Everything is prepared in `vscode-extension/` (PNG icon, Marketplace README, CHANGELOG, walkthrough,
 license, CI). Two things only the account owner can do — then it's one command.
 
-## One-time setup (5 minutes)
-1. **Create a publisher** at https://marketplace.visualstudio.com/manage — sign in with a Microsoft
-   account, *Create publisher*, ID **`ai-testing-marketplace`** (must match `publisher` in
-   `vscode-extension/package.json`; if the ID is taken, pick another and update that field).
-2. **Create a Personal Access Token** at https://dev.azure.com → User settings → Personal access tokens →
-   *New Token*: Organization **All accessible organizations**, Scopes → **Marketplace: Manage**. Copy it.
-3. **Push the code to the public repo** referenced in `package.json`
-   (`https://github.com/galentmarketplace/ai-testing-marketplace`) — the Marketplace links README/issues there.
+## One-time setup (5 minutes) — verified 2026-09-23
+Use a **personal Microsoft account** (outlook/hotmail/live). Corporate Entra ID tenants often block Azure
+DevOps/Marketplace and surface it as a bare **404** after sign-in. Use an incognito window, off any VPN.
+
+1. **Azure DevOps identity FIRST** — https://aex.dev.azure.com/signup → sign in → *Create new organization*
+   (any name; it only hosts the token). Visiting the publisher page before this exists can 404.
+2. **Create the publisher** — https://marketplace.visualstudio.com/manage → left pane → **Create publisher**
+   → ID **`ai-testing-marketplace`** (permanent; must match `publisher` in `vscode-extension/package.json`
+   — if taken, choose another and update that field) · Name *AI Testing Marketplace*.
+3. **Create the PAT** — in that Azure DevOps org: user settings (top-right) → *Personal access tokens* →
+   *New Token* → Organization **All accessible organizations** (not a single org, or publishing fails) →
+   Scopes **Custom defined → Marketplace → Manage** → Create → copy once.
+4. **Store it as a repo secret, never in chat/docs** — `gh secret set VSCE_PAT` (reads from your keyboard) or
+   GitHub → Settings → Secrets and variables → Actions → `VSCE_PAT`.
+5. Code lives at https://github.com/galentmarketplace/ai-testing-marketplace (the Marketplace links README/issues).
+
+> **PAT retirement:** Microsoft retires global Azure DevOps PATs on **1 Dec 2026** in favour of Entra ID managed
+> identity for publishing. This workflow works until then; plan the switch (`vsce` supports `--azure-credential`).
 
 ## Publish
 ```bash

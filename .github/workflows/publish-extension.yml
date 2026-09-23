@@ -21,6 +21,9 @@ jobs:
       - run: npm run compile
       - name: Package
         run: npx @vscode/vsce package --no-dependencies
+      - name: Verify the PAT can publish for the manifest's publisher (fails fast on a mismatch)
+        run: npx @vscode/vsce verify-pat "$(node -p "require('./package.json').publisher")" -p "$VSCE_PAT"
+        env: { VSCE_PAT: "${{ secrets.VSCE_PAT }}" }
       - name: Publish to VS Code Marketplace
         run: npx @vscode/vsce publish --no-dependencies -p "$VSCE_PAT"
         env: { VSCE_PAT: "${{ secrets.VSCE_PAT }}" }
