@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions: { contents: write }
     defaults: { run: { working-directory: vscode-extension } }
+    env:
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}    # secrets aren't allowed in step `if:`; env is
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -22,10 +24,9 @@ jobs:
       - name: Publish to VS Code Marketplace
         run: npx @vscode/vsce publish --no-dependencies -p "$VSCE_PAT"
         env: { VSCE_PAT: "${{ secrets.VSCE_PAT }}" }
-      - name: Publish to Open VSX (Cursor / VSCodium)
-        if: ${{ secrets.OVSX_PAT != '' }}
+      - name: Publish to Open VSX (Cursor / VSCodium) — only when OVSX_PAT is configured
+        if: env.OVSX_PAT != ''
         run: npx ovsx publish *.vsix -p "$OVSX_PAT"
-        env: { OVSX_PAT: "${{ secrets.OVSX_PAT }}" }
       - name: Attach .vsix to the GitHub release
         uses: softprops/action-gh-release@v2
         with: { files: vscode-extension/*.vsix }

@@ -5,6 +5,9 @@ on:
     branches: [main]
     tags: ["v*"]
   workflow_dispatch:
+concurrency:
+  group: build-image-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   image:
     runs-on: ubuntu-latest
