@@ -19,6 +19,7 @@ which is what a platform that "just executes" whatever agents are installed need
 
 Subagents never call each other — they only read/write PipelineState.
 """
+import time
 from collections.abc import Iterator
 
 from .agents.prescreen_agent import prescreen
@@ -41,8 +42,12 @@ def _reason(spec, note: str) -> str:
     return f"{note} {base}".strip() if note else base
 
 
-def orchestrate(story: dict, config: dict | None = None,
-                max_iters: int = MAX_ITERS) -> Iterator[dict]:
+class RunCancelled(Exception):
+    """Raised inside the loop when a cancel was requested or the run deadline passed."""
+
+
+def orchestrate(story: dict, config: dict | None = None, max_iters: int = MAX_ITERS,
+                should_cancel=None, deadline_s: float | None = None) -> Iterator[dict]:
     """Run the scheduler, yielding events:
       {"type":"think", reasoning, next, iteration}
       {"type":"node",  node, label, kind, update}
@@ -58,6 +63,15 @@ def orchestrate(story: dict, config: dict | None = None,
     state: dict = {"story": story, "status": "running", "attempts": {},
                    "run_config": config}
     it = 0
+    started = time.monotonic()
+
+    def _check_abort() -> str | None:
+        """Cooperative stop between steps: an operator cancel, or the whole-run deadline."""
+        if should_cancel is not None and should_cancel():
+            return "cancelled"
+        if deadline_s is not None and (time.monotonic() - started) > deadline_s:
+            return "timed_out"
+        return None
 
     def node_event(spec, update):
         return {"type": "node", "node": spec.id, "label": spec.label,
@@ -99,6 +113,7 @@ def orchestrate(story: dict, config: dict | None = None,
     status = {s.id: ("done" if s.trigger_only else "pending") for s in plan}
     retries: dict[str, int] = {}
     priority: set[str] = set()   # a failed gate's fix-loop — resolve it before unrelated work
+    errors: list[dict] = []      # steps that crashed (run blocks; never silently "done")
     note = ""
 
     def _runnable(s) -> bool:
@@ -118,6 +133,14 @@ def orchestrate(story: dict, config: dict | None = None,
 
     while it < max_iters:
         it += 1
+        stop = _check_abort()
+        if stop:
+            state["status"] = stop
+            yield {"type": "think", "iteration": it, "next": "block",
+                   "reasoning": ("Cancelled by the operator — stopping before the next step."
+                                 if stop == "cancelled" else
+                                 "Run deadline exceeded — stopping before the next step.")}
+            break
         # A failing gate's fix-loop (heal -> re-run -> re-gate) takes priority, so a regression
         # failure is healed and re-checked BEFORE the orchestrator moves on to unrelated agents.
         spec = next((s for s in plan if s.id in priority and _runnable(s)), None) \
@@ -138,10 +161,18 @@ def orchestrate(story: dict, config: dict | None = None,
             state = {**state, **update}
             status[spec.id] = "done"
             yield node_event(spec, update)
-        except Exception as exc:  # an error is an observation; don't wedge the loop
-            status[spec.id] = "done"
-            yield node_event(spec, {"error": str(exc)})
-            continue
+        except Exception as exc:
+            # A crashed step is NOT a completed step. Mark it errored and block the run: letting the
+            # plan continue produced "done" runs whose gate never ran (a silent green).
+            status[spec.id] = "error"
+            errors.append({"step": spec.id, "label": spec.label, "error": str(exc)})
+            state["step_errors"] = list(errors)
+            yield node_event(spec, {"error": str(exc), "step_status": "error"})
+            state["status"] = "blocked"
+            yield {"type": "think", "iteration": it, "next": "block",
+                   "reasoning": f"{spec.label} crashed ({str(exc)[:160]}) — blocking for human triage "
+                                f"rather than reporting a green run with a step that never produced output."}
+            break
 
         # gate outcome: on failure, loop back (reset fixer + chain + gate) or block
         if spec.kind == "gate" and spec.gate_name:

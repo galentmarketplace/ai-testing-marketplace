@@ -15,13 +15,17 @@ Override the endpoint/model with LLM_BASE_URL and LLM_MODEL when needed.
 Every agent asks for JSON and we parse strictly — structured output is what makes
 multi-agent handoffs reliable.
 """
+import contextvars
 import json
 import os
 import re
 import urllib.error
 import urllib.request
 
-from . import runctx
+from . import observability, runctx
+
+# Which agent is calling — so token usage is attributed per agent within a run.
+_AGENT: contextvars.ContextVar[str] = contextvars.ContextVar("atm_llm_agent", default="")
 
 # provider -> (base_url, api-key env var or None, default model)
 _OPENAI_COMPAT = {
@@ -49,6 +53,11 @@ def _call_anthropic(system: str, user: str, max_tokens: int) -> str:
                   max_tokens=max_tokens, system=system,
                   messages=[{"role": "user", "content": user}])
     resp = client.messages.create(**kwargs)   # newer models reject temperature — omit it
+    u = getattr(resp, "usage", None)          # per-run token + cost accounting
+    if u is not None:
+        observability.record_usage(_AGENT.get() or "llm", kwargs["model"],
+                                   int(getattr(u, "input_tokens", 0) or 0),
+                                   int(getattr(u, "output_tokens", 0) or 0))
     # concatenate any text blocks (skip tool/thinking blocks)
     return "".join(getattr(b, "text", "") for b in resp.content) or resp.content[0].text
 
@@ -81,6 +90,10 @@ def _call_openai_compatible(provider: str, system: str, user: str, max_tokens: i
         try:
             with urllib.request.urlopen(req, timeout=180) as r:
                 data = json.loads(r.read())
+            u = data.get("usage") or {}
+            if u:
+                observability.record_usage(_AGENT.get() or "llm", model,
+                                           int(u.get("prompt_tokens", 0)), int(u.get("completion_tokens", 0)))
             return data["choices"][0]["message"]["content"]
         except urllib.error.HTTPError as e:
             if e.code in (429, 500, 502, 503) and attempt < 4:
@@ -94,6 +107,7 @@ def _call_openai_compatible(provider: str, system: str, user: str, max_tokens: i
 
 def call_llm(agent_name: str, system: str, user: str, max_tokens: int = 4000) -> str:
     """Return the raw text of the model response (routed to the configured provider)."""
+    _AGENT.set(agent_name)
     if runctx.is_mock():
         return _mock_response(agent_name)
     p = _provider()

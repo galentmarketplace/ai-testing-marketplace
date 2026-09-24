@@ -6,7 +6,7 @@ files so the pipeline flow is demonstrable.
 """
 from pathlib import Path
 
-from ..config import GENERATED_DIR
+from .. import sandbox
 from ..llm import call_llm_json
 from ..state import PipelineState
 
@@ -35,7 +35,7 @@ def generate_code(state: PipelineState) -> dict:
 
     artifacts = []
     for f in raw["files"]:
-        out = GENERATED_DIR / Path(f["path"]).relative_to("generated")
+        out = sandbox.run_workspace() / Path(f["path"]).relative_to("generated")
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(f["content"])
         artifacts.append({"path": str(out), "description": f.get("description", "")})

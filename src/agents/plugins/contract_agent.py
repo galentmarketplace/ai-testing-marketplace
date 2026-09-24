@@ -5,7 +5,7 @@ and gates on schema/breaking-change violations. One file = one capability.
 """
 from pathlib import Path
 
-from ...config import GENERATED_DIR
+from ... import sandbox
 from ...llm import call_llm_json
 from ...mocks import MOCK_RESPONSES
 from ...registry import AgentSpec, DisplayNode
@@ -32,7 +32,7 @@ def generate_contract(state: PipelineState) -> dict:
     raw = call_llm_json("contract_agent", SYSTEM, f"Acceptance criteria:\n{ac}{ctx}")
     arts = list(state.get("contract_artifacts", []))
     for f in raw["files"]:
-        out = GENERATED_DIR / Path(f["path"]).relative_to("generated")
+        out = sandbox.run_workspace() / Path(f["path"]).relative_to("generated")
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(f["content"])
         arts.append({"type": "contract", "path": str(out), "tags": f.get("tags", [])})

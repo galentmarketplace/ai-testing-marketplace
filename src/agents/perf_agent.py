@@ -14,13 +14,12 @@ The REAL path builds a deterministic k6 script from the repo's analyzed endpoint
 the LLM. No app-specific assumptions.
 """
 import json
-import os
 import re
 import subprocess
 from pathlib import Path
 
-from .. import runctx
-from ..config import GENERATED_DIR, PROJECT_ROOT
+from .. import runctx, sandbox
+from ..config import PROJECT_ROOT
 from ..llm import call_llm_json
 from ..state import PipelineState, TestArtifact
 
@@ -159,7 +158,7 @@ def _capture_web_vitals(base_url: str) -> dict | None:
     try:
         out = subprocess.run([node, "webvitals.cjs", base_url], cwd=str(runner),
                              capture_output=True, text=True, timeout=90,
-                             env={**os.environ, "NODE_PATH": str(runner / "node_modules")})
+                             env=sandbox.child_env({"NODE_PATH": str(runner / "node_modules")}))
         line = (out.stdout or "").strip().splitlines()[-1] if out.stdout.strip() else ""
         return json.loads(line) if line else None
     except Exception:
@@ -194,7 +193,7 @@ def generate_perf_scripts(state: PipelineState) -> dict:
         vitals = _capture_web_vitals(base_web.rstrip("/"))
         if vitals:
             rep = _vitals_report(vitals)
-            vout = GENERATED_DIR / "perf" / "web-vitals.json"
+            vout = sandbox.run_workspace("perf") / "web-vitals.json"
             vout.parent.mkdir(parents=True, exist_ok=True)
             vout.write_text(json.dumps(rep, indent=2))
             artifacts.append(TestArtifact(type="web-vitals", path=str(vout), tags=["@perf", "@webvitals"]).model_dump())
@@ -206,7 +205,7 @@ def generate_perf_scripts(state: PipelineState) -> dict:
         base = inp.get("base_url") or "http://localhost:8888"
         test_type = _detect_type(inp)
         content = _build_real_k6(analysis, base, inp)
-        out = GENERATED_DIR / "perf" / f"api-{test_type}.k6.js"
+        out = sandbox.run_workspace("perf") / f"api-{test_type}.k6.js"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(content)
         artifacts.append(TestArtifact(type="k6", path=str(out), tags=["@perf", "@real", f"@{test_type}"]).model_dump())
@@ -219,7 +218,7 @@ def generate_perf_scripts(state: PipelineState) -> dict:
     ctx = f"\nAPI base URL: {inp['base_url']}" if inp.get("base_url") else ""
     raw = call_llm_json("perf_agent", SYSTEM, f"Acceptance criteria:\n{ac}{ctx}")
     for f in raw["files"]:
-        fout = GENERATED_DIR / Path(f["path"]).relative_to("generated")
+        fout = sandbox.run_workspace() / Path(f["path"]).relative_to("generated")
         fout.parent.mkdir(parents=True, exist_ok=True)
         fout.write_text(f["content"])
         artifacts.append(TestArtifact(type="k6", path=str(fout),

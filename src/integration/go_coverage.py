@@ -9,6 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from .. import sandbox
 from . import reports
 
 
@@ -33,7 +34,8 @@ def run_go_coverage(path: str, timeout: int = 600) -> dict:
     prof = mod_dir / "coverage.out"
     try:
         t = subprocess.run(["go", "test", "./...", "-count=1", "-covermode=atomic", f"-coverprofile={prof}"],
-                           cwd=str(mod_dir), capture_output=True, text=True, timeout=timeout)
+                           cwd=str(mod_dir), capture_output=True, text=True, timeout=timeout,
+                           env=sandbox.child_env())
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": f"go test timed out after {timeout}s"}
     except Exception as exc:

@@ -10,8 +10,7 @@ not "self-healed" away. So this capability:
 """
 import json
 
-from .. import runctx
-from ..config import GENERATED_DIR
+from .. import runctx, sandbox
 from ..integration import security_scan
 from ..integration.repo_analyzer import _ensure_local
 from ..mocks import MOCK_RESPONSES
@@ -50,7 +49,7 @@ def generate_security_scan(state: PipelineState) -> dict:
                 {"id": "dast", "label": "Dynamic (DAST) / API security", "tool": "OWASP ZAP (roadmap)"},
             ],
             "standards": ["OWASP Top 10", "CWE", "CVSS", "SARIF"]}
-    out = GENERATED_DIR / "security" / "scan-plan.json"
+    out = sandbox.run_workspace("security") / "scan-plan.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(plan, indent=2))
     arts = list(state.get("security_artifacts", []))
@@ -102,16 +101,16 @@ def run_security_scan(state: PipelineState) -> dict:
 
     arts = list(state.get("security_artifacts", []))
     md = security_scan.report_markdown(report, repo)
-    md_out = GENERATED_DIR / "security" / "security-report.md"
+    md_out = sandbox.run_workspace("security") / "security-report.md"
     md_out.parent.mkdir(parents=True, exist_ok=True)
     md_out.write_text(md)
     arts.append({"type": "sast-report", "path": str(md_out), "tags": ["@security"]})
     if report.get("ok"):
-        js_out = GENERATED_DIR / "security" / "security-report.json"
+        js_out = sandbox.run_workspace("security") / "security-report.json"
         js_out.write_text(json.dumps(report, indent=2))
         arts.append({"type": "sast-json", "path": str(js_out), "tags": ["@security"]})
         # SARIF — the enterprise interchange format (GitHub Security tab, CWE/CVSS).
-        sarif_out = GENERATED_DIR / "security" / "security.sarif"
+        sarif_out = sandbox.run_workspace("security") / "security.sarif"
         sarif_out.write_text(json.dumps(security_scan.report_sarif(report), indent=2))
         arts.append({"type": "sast-sarif", "path": str(sarif_out), "tags": ["@security"]})
         s = report["by_severity"]

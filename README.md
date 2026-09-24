@@ -1,96 +1,71 @@
-# Agentic Testing Pipeline — Prototype
+# AI Testing Marketplace
 
-Multi-agent test orchestration skeleton (LangGraph + Claude). Companion to
-`agentic-testing-marketplace-architecture.md`. Target app: [IDURAR ERP/CRM](https://github.com/idurar/idurar-erp-crm).
+An agentic testing platform: a fleet of AI agents turns a **Jira ticket** into **functional test cases**,
+generates **Playwright automation grounded in the real app**, self-heals it to green, runs **Jenkins CI**,
+opens a **pull request**, and posts the results back to the ticket — plus multi-methodology **security
+scanning**, enterprise **performance testing** (open-model k6, Core Web Vitals, per-pod CPU/memory) and
+**Go code coverage** with standard exports.
 
-## What it does
+Ships with a **VS Code extension** and an **MCP server**, so the same capabilities are available inside
+the editor and to coding agents (Copilot agent mode, Cursor, Claude Code).
 
-Takes a user story and runs it through the full pipeline:
+## How it works
 
-```
-generate_ac → generate_code → run_unit_tests → UNIT gate
-  → generate_scripts (Playwright + k6) → execute → QG1
-  → select_regression (tag-based) → execute → QG2
-  → open_pr
-```
+Every capability is one declarative `AgentSpec` in `src/registry.py`. A generic dependency scheduler
+(`src/orchestrator.py`) runs the active plan: agents produce artifacts, runners execute them, gates judge
+the results, and a failing gate loops the responsible agent back until it passes or the run blocks.
+Adding an agent means appending a spec — no edits to the orchestrator, server or UI.
 
-Every gate failure routes back to the responsible agent with failure context
-(self-correction), capped at `MAX_RETRIES`, then blocks for human review.
+**Sources of truth, never guesses:** requirements come from Jira, routes and the login path are derived
+from the application's own code, locators come from the running app's accessibility tree, and Jenkins is
+the final verdict. An **oracle check** rejects any "fix" that makes a test pass without still asserting
+the acceptance criterion.
 
 ## Quick start
 
 ```bash
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-
-# 1. Demo with canned LLM responses — no API key, no cost:
-MOCK_LLM=1 python -m src.main
-
-# 2. Real Claude calls:
-cp .env.example .env   # add your ANTHROPIC_API_KEY
-python -m src.main
-python -m src.main --story my_story.json   # your own story
+cp .env.example .env            # add ANTHROPIC_API_KEY (and GitHub OAuth if you want sign-in)
+PORT=8090 python -m web.server  # → http://127.0.0.1:8090
 ```
 
-Generated artifacts land in `generated/` (code, e2e specs, k6 scripts).
-Full final state is dumped to `pipeline_result.json`.
+Or with Docker: `docker compose up --build`. For a cluster, see [docs/DEPLOY.md](docs/DEPLOY.md).
 
-## Web UI
+Mock mode (`MOCK_LLM=1`) runs the whole pipeline with canned responses — no API key, no cost — which is
+what CI uses to prove every gate still passes.
 
-A live dashboard that runs the real pipeline and streams every agent/gate step
-into the browser as it executes (via Server-Sent Events).
+## Access
+
+Every `/api/*` route needs a principal: a GitHub-OAuth browser session, or an `Authorization: Bearer`
+API token minted in the dashboard (**Configuration → API tokens**) for the extension, the MCP server and
+CI. Runs and Configurations are owner-scoped. Project secrets and OAuth tokens are encrypted at rest;
+child processes run with an allow-listed environment so customer test code never sees platform
+credentials.
+
+## The agents
+
+Prescreen · Acceptance Criteria · Functional Cases · **Playwright Agent** (DOM + accessibility grounded,
+trace-fed healing) · **Oracle Check** (rejects false passes) · Performance (k6 + Web Vitals + per-pod
+CPU/memory) · Security (SAST · SCA/CVE · secrets · IaC · containers · SBOM → SARIF) · **Go Coverage** +
+Go Test Gen · Unit · Regression · Accessibility · API Contract · Jenkins CI · Publish Branch · Jira Update
+· Self-Heal. Browse them in the dashboard's **Agents** view or via the MCP `list_agents` tool.
+
+## Documentation
+
+| | |
+|---|---|
+| [docs/STANDARDS.md](docs/STANDARDS.md) | agent output contract, gate vocabulary, report formats, access control |
+| [docs/DEPLOY.md](docs/DEPLOY.md) | single VM or Kubernetes, with per-pod performance |
+| [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md) | gap analysis and the phased plan |
+| [docs/PUBLISHING.md](docs/PUBLISHING.md) | publishing the VS Code extension |
+| [vscode-extension/](vscode-extension/) | the editor integration |
+
+## Development
 
 ```bash
-pip install -r requirements.txt          # includes fastapi + uvicorn
-
-MOCK_LLM=1 python -m web.server           # demo, no API key needed
-# python -m web.server                    # real Claude (needs .env)
-
-# then open http://127.0.0.1:8000
+python -m pytest tests -q     # platform tests (authorization, isolation, run control)
+ruff check src web tests      # lint
 ```
 
-Features: edit the story and run it, watch the pipeline graph light up node by
-node, inspect generated acceptance criteria, quality-gate verdicts, test-run
-results, click any generated artifact to view its code, and see the drafted PR.
-Toggle "Mock mode" off in the UI to make real Claude calls.
-
-Backend: `web/server.py` (FastAPI, streams `graph.stream(...)`).
-Frontend: `web/static/index.html` (self-contained, no build step).
-
-## Project map
-
-| Path | What | Design doc § |
-|------|------|--------------|
-| `src/state.py` | **Data contracts** (AC, TestArtifact, RunResult, GateDecision) — read this first | §4.3 |
-| `src/graph.py` | **The Orchestrator** — LangGraph nodes + conditional edges | §4.2 |
-| `src/agents/` | AC, Dev, UI Automation, Perf, Regression, PR agents | §2 |
-| `src/gates/quality_gates.py` | Gate policy evaluation + routing (plain code, no LLM) | §4.4 |
-| `src/runner/executor.py` | Test runner (simulated; `REAL_RUNNER=1` hooks sketched) | step 7 |
-| `src/llm.py` | Anthropic client + strict JSON parsing + mock mode | — |
-| `src/config.py` | Gate thresholds, retry caps | §4.4 |
-
-## What's real vs stubbed
-
-**Real:** the orchestration graph, gate logic, retry/blocked routing, state
-contracts, LLM prompts for all six agents, artifact file writing.
-
-**Stubbed (your build order, matching design doc phases):**
-
-1. **Runner** (`REAL_RUNNER=1`) — wire Jest/Playwright/k6 subprocess calls and
-   parse their JSON reports into `RunResult`. Needs IDURAR running
-   (`docker compose up` in the IDURAR repo) + `npm init playwright@latest` + k6 installed.
-   *Do this first — it turns the demo into a real system.*
-2. **Jira input** — replace `--story` JSON with a Jira fetch (your Jira MCP or REST API).
-3. **Human approval interrupt** after `generate_ac` — LangGraph `interrupt()`.
-4. **UI agent grounding** — feed a page-object map of IDURAR into the prompt so
-   selectors match the real DOM; add the run-fail-regenerate self-heal loop.
-5. **PR agent** — `gh pr create` / GitHub API with a branch of generated artifacts.
-6. **Dashboard + feedback loop** (steps 10/12) — persist state to a DB, Allure/ReportPortal.
-
-## Learning guide (start-from-scratch reading order)
-
-1. `src/state.py` — agents only talk through typed state
-2. `src/agents/ac_agent.py` — the simplest agent: prompt → JSON → validated contract
-3. `src/graph.py` — how nodes/edges/conditional routing express the pipeline
-4. `src/gates/quality_gates.py` — why gates are code, not LLM judgment
-5. `src/agents/dev_agent.py` — self-correction: failures fed back on retry
-6. Run `MOCK_LLM=1 python -m src.main` and follow the log against the graph
+CI runs both plus a full mock pipeline on every push.

@@ -20,8 +20,8 @@ import os
 import subprocess
 from pathlib import Path
 
-from .. import runctx
-from ..config import GENERATED_DIR, PROJECT_ROOT
+from .. import runctx, sandbox
+from ..config import PROJECT_ROOT
 from ..llm import call_llm_json
 from ..state import PipelineState, TestArtifact
 
@@ -99,8 +99,9 @@ def _explore(base: str, routes: list[str], email: str, password: str, login_path
     runner = PROJECT_ROOT / "e2e-runner"
     if not (runner / "explore.cjs").exists():
         return []
-    env = {**os.environ, "LOGIN_EMAIL": email or "", "LOGIN_PASSWORD": password or "",
-           "LOGIN_PATH": login_path or "/login"}
+    # The explorer needs the app credentials, nothing else the server holds.
+    env = sandbox.child_env({"LOGIN_EMAIL": email or "", "LOGIN_PASSWORD": password or "",
+                             "LOGIN_PATH": login_path or "/login"})
     try:
         out = subprocess.run([node, "explore.cjs", base, ",".join(routes)], cwd=str(runner),
                              capture_output=True, text=True, timeout=150, env=env)
@@ -248,7 +249,7 @@ def generate_ui_scripts(state: PipelineState) -> dict:
 
     artifacts = list(state.get("test_artifacts", []))
     for f in files:
-        out = GENERATED_DIR / Path(f["path"]).relative_to("generated")
+        out = sandbox.run_workspace() / Path(f["path"]).relative_to("generated")
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(f["content"])
         artifacts.append(TestArtifact(type="playwright", path=str(out),

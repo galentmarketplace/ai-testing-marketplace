@@ -10,7 +10,7 @@ grounded in the real DOM — so nothing is invented; every spec traces back to a
 """
 import json
 
-from ..config import GENERATED_DIR
+from .. import sandbox
 from ..llm import call_llm_json
 from ..mocks import MOCK_RESPONSES
 from ..state import PipelineState
@@ -87,7 +87,7 @@ def generate_functional_cases(state: PipelineState) -> dict:
                            "(model/limit). Provide clearer acceptance criteria or use a stronger model.")
 
     repo = inp.get("source_repo") or inp.get("repo") or "app"
-    out = GENERATED_DIR / "functional" / "functional-test-cases.md"
+    out = sandbox.run_workspace("functional") / "functional-test-cases.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(_md(cases, repo))
     arts = list(state.get("functional_artifacts", []))
@@ -113,7 +113,7 @@ def generate_functional_cases(state: PipelineState) -> dict:
                 **({"note": c.get("automation_note")} if c.get("automation_note") else {}),
             } for c in cases],
         }
-        yout = GENERATED_DIR / "functional" / "functional-cases.yaml"
+        yout = sandbox.run_workspace("functional") / "functional-cases.yaml"
         yout.write_text(yaml.safe_dump(intent, sort_keys=False, allow_unicode=True, width=100))
         arts.append({"type": "functional-cases-yaml", "path": str(yout), "tags": ["@functional", "@intent"]})
     except Exception as exc:  # the YAML is a convenience artifact — never fail the run over it

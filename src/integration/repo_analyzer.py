@@ -11,6 +11,7 @@ import subprocess
 from glob import glob
 from pathlib import Path
 
+from .. import sandbox
 from ..config import PROJECT_ROOT
 
 REPOS_DIR = PROJECT_ROOT / "repos"
@@ -29,7 +30,7 @@ def _ensure_local(source: str) -> Path:
         if not dest.exists():
             REPOS_DIR.mkdir(parents=True, exist_ok=True)
             subprocess.run(["git", "clone", "--depth", "1", source, str(dest)],
-                           check=True, capture_output=True, timeout=300)
+                           check=True, capture_output=True, timeout=300, env=sandbox.child_env())
         return dest
     return Path(source)
 

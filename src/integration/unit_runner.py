@@ -11,6 +11,8 @@ import re
 import subprocess
 from pathlib import Path
 
+from .. import sandbox
+
 _NODE_BIN = "/opt/homebrew/opt/node@20/bin"
 
 
@@ -20,7 +22,8 @@ def _bin(name: str) -> str:
 
 
 def _node_env() -> dict:
-    return {**os.environ, "PATH": _NODE_BIN + os.pathsep + os.environ.get("PATH", ""), "CI": "1"}
+    # Allow-listed env: the repo's own test command must never see the platform's credentials.
+    return sandbox.child_env({"PATH": _NODE_BIN + os.pathsep + os.environ.get("PATH", "")})
 
 
 def _run(cmd, cwd, timeout, env=None):

@@ -12,8 +12,8 @@ import re
 import uuid
 from pathlib import Path
 
-from .. import runctx
-from ..config import GENERATED_DIR, PROJECT_ROOT
+from .. import runctx, sandbox
+from ..config import PROJECT_ROOT
 from ..state import Failure, PerfMetrics, PipelineState, RunResult
 
 
@@ -115,7 +115,7 @@ def _run_real(suite: str, state: PipelineState) -> RunResult:
             return _blocked("k6 not installed (brew install k6)")
         api_base = inp.get("base_url") or os.environ.get("BASE_URL", "http://localhost:8888")
         token = _auto_login(api_base) or os.environ.get("TOKEN", "")
-        out = GENERATED_DIR / "perf" / f"summary-{rid}.json"
+        out = sandbox.run_workspace("perf") / f"summary-{rid}.json"
 
         # DEPLOYED per-pod validation: while k6 hits the deployed URL, sample the target pod(s) CPU/mem
         # from the cluster (kubectl top) so we can report utilization vs limits + restarts. Read-only.
@@ -134,7 +134,7 @@ def _run_real(suite: str, state: PipelineState) -> RunResult:
 
         subprocess.run(["k6", "run", "--quiet", "--summary-export", str(out), k6art["path"]],
                        capture_output=True, timeout=600,
-                       env={**os.environ, "BASE_URL": api_base, "TOKEN": token})
+                       env=sandbox.child_env({"BASE_URL": api_base, "TOKEN": token}))
         if sampler:
             try:
                 pod_resources = sampler.stop_and_report()
@@ -175,12 +175,13 @@ def _run_real(suite: str, state: PipelineState) -> RunResult:
             app_url = inp.get("base_url") or os.environ.get("APP_URL", "http://localhost:3000")
             proc = subprocess.run(["npx", "playwright", "test", spec.name, "--reporter=json"],
                                   capture_output=True, text=True, timeout=1200, cwd=str(runner),
-                                  env={**os.environ, "PW_TESTDIR": str(spec.parent), "BASE_URL": app_url,
-                                       "PW_RETRIES": "1",  # one retry WITH tracing on for a richer failure signal
-                                       "NODE_PATH": str(runner / "node_modules"),
-                                       "LOGIN_PATH": inp.get("login_url") or "/login",
-                                       "LOGIN_EMAIL": inp.get("login_user") or os.environ.get("APP_USER") or os.environ.get("IDURAR_USER", ""),
-                                       "LOGIN_PASSWORD": inp.get("login_password") or os.environ.get("APP_PASS") or os.environ.get("IDURAR_PASS", "")})
+                                  env=sandbox.child_env({
+                                      "PW_TESTDIR": str(spec.parent), "BASE_URL": app_url,
+                                      "PW_RETRIES": "1",  # one retry WITH tracing on for a richer failure signal
+                                      "NODE_PATH": str(runner / "node_modules"),
+                                      "LOGIN_PATH": inp.get("login_url") or "/login",
+                                      "LOGIN_EMAIL": inp.get("login_user") or os.environ.get("APP_USER", ""),
+                                      "LOGIN_PASSWORD": inp.get("login_password") or os.environ.get("APP_PASS", "")}))
             try:
                 report = json.loads(proc.stdout)
                 stats = report.get("stats", {})
@@ -250,7 +251,7 @@ def run_suite(suite: str, state: PipelineState) -> dict:
     arts = list(state.get("test_artifacts", []))
     try:
         from ..integration import reports
-        jout = GENERATED_DIR / "reports" / f"junit-{suite}-{result.run_id}.xml"
+        jout = sandbox.run_workspace("reports") / f"junit-{suite}-{result.run_id}.xml"
         jout.parent.mkdir(parents=True, exist_ok=True)
         jout.write_text(reports.junit_xml(result.model_dump()))
         arts.append({"type": f"junit-{suite}", "path": str(jout), "tags": ["@report", "@junit"]})

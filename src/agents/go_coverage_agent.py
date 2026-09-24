@@ -11,8 +11,8 @@ inputs.coverage_blocking=yes to fail the COVERAGE gate below the threshold. Neve
 """
 import json
 
-from .. import runctx
-from ..config import GATE_POLICY, GENERATED_DIR
+from .. import runctx, sandbox
+from ..config import GATE_POLICY
 from ..integration import go_coverage as gocov
 from ..integration import reports
 from ..integration.repo_analyzer import _ensure_local
@@ -68,7 +68,7 @@ def go_coverage(state: PipelineState) -> dict:
         if rep.get("ok"):
             print(f"  [Go Coverage] measuring {path} …")
 
-    out_dir = GENERATED_DIR / "coverage"
+    out_dir = sandbox.run_workspace("coverage")
     out_dir.mkdir(parents=True, exist_ok=True)
     arts = list(state.get("coverage_artifacts", []))
     (out_dir / "coverage-report.md").write_text(gocov.report_markdown(rep, repo, min_pct))

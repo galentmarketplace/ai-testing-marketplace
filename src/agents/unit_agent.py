@@ -9,7 +9,7 @@ Two modes:
     the Dev agent's self-heal loop still works for code we generated.
 """
 
-from ..config import GENERATED_DIR
+from .. import sandbox
 from ..gates import quality_gates
 from ..integration import unit_runner
 from ..integration.repo_analyzer import _ensure_local
@@ -48,7 +48,7 @@ def run_unit_tests(state: PipelineState) -> dict:
 
     report_arts = list(state.get("unit_artifacts", []))
     md = unit_runner.report_markdown(r, repo)
-    out = GENERATED_DIR / "unit" / "unit-report.md"
+    out = sandbox.run_workspace("unit") / "unit-report.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(md)
     report_arts.append({"type": "unit-report", "path": str(out), "tags": ["@unit"]})

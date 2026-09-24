@@ -28,7 +28,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 
-from src import runctx
+from src import observability, runctx, sandbox
 from src.config import GENERATED_DIR
 from src.graph import build_graph
 from src.integration import github as gh
@@ -38,6 +38,7 @@ from src.orchestrator import orchestrate
 from src.registry import build_manifest
 from web import store
 
+observability.setup_logging()   # JSON logs tagged with the active run_id
 app = FastAPI(title="Agentic Testing Pipeline")
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -59,6 +60,8 @@ OAUTH_STATES: set[str] = set()
 ADMINS = {x.strip() for x in os.environ.get("ATM_ADMIN_LOGINS", "").split(",") if x.strip()}
 ENV_TOKEN = os.environ.get("ATM_API_TOKEN") or None
 SERVICE_LOGIN = os.environ.get("ATM_SERVICE_LOGIN", "service")
+# Whole-run deadline: a runaway run used to end only at MAX_ITERS or a 30-minute Jenkins poll.
+RUN_DEADLINE_S = float(os.environ.get("ATM_RUN_DEADLINE_S", "2700"))   # 45 minutes
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "")   # e.g. https://xxx.ngrok-free.dev (fixes the OAuth callback)
 
 
@@ -263,7 +266,9 @@ def _execute_run(run_id: str, req: RunRequest, github_token: str | None):
     store.set_status(run_id, "running")
     final = "done"
     try:
-        for ev in orchestrate(story, config=config):
+        for ev in orchestrate(story, config=config,
+                              should_cancel=lambda: store.cancel_requested(run_id),
+                              deadline_s=RUN_DEADLINE_S):
             kind = ev["type"]
             if kind == "think":
                 payload = {"reasoning": ev["reasoning"], "next": ev["next"], "iteration": ev["iteration"]}
@@ -276,7 +281,11 @@ def _execute_run(run_id: str, req: RunRequest, github_token: str | None):
                 payload = ev
             store.append_event(run_id, seq, kind, _redact(payload))
             seq += 1
-        store.finish_run(run_id, final, {"status": final})
+        usage = observability.usage_for(run_id)
+        observability.log("atm.run", "run finished", status=final,
+                          **{k: usage[k] for k in ("calls", "input_tokens", "output_tokens", "cost_usd")})
+        store.finish_run(run_id, final, {"status": final, "llm_usage": usage})
+        observability.clear_usage(run_id)
     except Exception as exc:  # persist the error so a reconnecting client sees it
         store.append_event(run_id, seq, "error", {"message": str(exc)})
         store.finish_run(run_id, "error", {"message": str(exc)})
@@ -456,13 +465,26 @@ def _fold_run(run_id: str) -> dict:
     arts = [a.get("path") for k in ("test_artifacts", "security_artifacts", "functional_artifacts", "coverage_artifacts")
             for a in st.get(k, []) if a.get("path")]
     sec = st.get("security_report")
+    usage = (r.get("result") or {}).get("llm_usage") or observability.usage_for(run_id)
     return {"run_id": run_id, "status": r.get("status"), "flow": r.get("flow"), "agents_run": nodes, "gates": gates,
+            "llm_usage": usage, "step_errors": st.get("step_errors"),
             "pr": (st.get("pr") or {}).get("url"), "jenkins": st.get("jenkins_report"),
             "functional_cases": len(st.get("functional_cases") or []), "jira_cases": st.get("jira_cases"),
             "security": {k: sec.get(k) for k in ("total", "by_severity", "methodologies_run")} if sec else None,
             "coverage": {k: (st.get("coverage_report") or {}).get(k) for k in ("total_pct", "min_pct", "uncovered_funcs")}
                         if st.get("coverage_report") else None,
             "artifacts": arts[:40], "jira_reported": st.get("jira_reported")}
+
+
+@app.post("/api/runs/{run_id}/cancel")
+def run_cancel(run_id: str, principal: dict = Depends(require_auth)):
+    """Ask a running run to stop. The orchestrator checks between steps, so the run ends at the next
+    boundary with status `cancelled` (already-finished runs are returned unchanged)."""
+    r = _assert_owner_run(run_id, principal)
+    if r.get("status") in store.TERMINAL:
+        return {"ok": True, "status": r["status"], "note": "run already finished"}
+    store.request_cancel(run_id)
+    return {"ok": True, "status": "cancelling"}
 
 
 @app.get("/api/runs/{run_id}/summary")
@@ -481,6 +503,12 @@ def artifact(path: str, principal: dict = Depends(require_auth)):
         raise HTTPException(403, "path outside generated/")
     if not target.is_file():
         raise HTTPException(404, "not found")
+    # Artifacts live under generated/runs/<run_id>/… — only the run's owner (or an admin) may read them.
+    owner_run = sandbox.run_id_for_path(target)
+    if owner_run:
+        _assert_owner_run(owner_run, principal)
+    elif not principal["admin"]:
+        raise HTTPException(404, "not found")      # legacy shared-directory artifacts: admin only
     return {"path": str(target), "content": target.read_text()}
 
 

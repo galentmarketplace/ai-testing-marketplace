@@ -50,10 +50,14 @@ COPY . .
 RUN mkdir -p data generated repos
 VOLUME ["/app/data", "/app/generated", "/app/repos"]
 
+# Run as a non-root user; the state dirs it must write are chowned below.
+RUN useradd --create-home --uid 10001 atm && chown -R atm:atm /app /ms-playwright
+USER atm
+
 ENV PYTHONPATH=/app \
     PORT=8090 \
-    MOCK_LLM=1 \
-    REAL_RUNNER=0
+    MOCK_LLM=0 \
+    REAL_RUNNER=1
 EXPOSE 8090
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

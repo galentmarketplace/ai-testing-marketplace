@@ -25,6 +25,8 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from .. import sandbox
+
 _SEMGREP = str(Path(sys.prefix) / "bin" / "semgrep")
 _SEV = {"ERROR": "high", "WARNING": "medium", "INFO": "low"}
 _SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
@@ -49,7 +51,8 @@ def _which(tool: str) -> str | None:
 
 def _run(cmd, cwd=None, timeout=300):
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd)
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd,
+                              env=sandbox.child_env())
     except Exception:
         return None
 

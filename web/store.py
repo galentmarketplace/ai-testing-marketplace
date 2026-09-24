@@ -31,8 +31,14 @@ _write_lock = threading.Lock()   # serialize writers (SQLite single-writer)
 SECRET_FIELDS = ("login_password", "jira_token", "jenkins_token")
 
 
-def _fernet():
+def _keys() -> list:
+    """Fernet keys, newest first. ATM_SECRET_KEY (comma-separated: current[,retired…]) is the
+    production path — inject it from a secrets manager. The on-disk key is a dev fallback, generated
+    once. Extra keys are accepted for DECRYPTION only, which is what makes rotation possible."""
     from cryptography.fernet import Fernet
+    env = os.environ.get("ATM_SECRET_KEY", "").strip()
+    if env:
+        return [Fernet(k.strip().encode()) for k in env.split(",") if k.strip()]
     if not _KEY_PATH.exists():
         _KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
         _KEY_PATH.write_bytes(Fernet.generate_key())
@@ -40,7 +46,13 @@ def _fernet():
             _KEY_PATH.chmod(0o600)
         except Exception:
             pass
-    return Fernet(_KEY_PATH.read_bytes())
+    return [Fernet(_KEY_PATH.read_bytes())]
+
+
+def _fernet():
+    from cryptography.fernet import MultiFernet
+    ks = _keys()
+    return MultiFernet(ks) if len(ks) > 1 else ks[0]
 
 
 def encrypt(s: str) -> str:
@@ -48,6 +60,7 @@ def encrypt(s: str) -> str:
 
 
 def decrypt(s: str) -> str:
+    """Decrypt with the current key, falling back to retired keys so a rotation never loses data."""
     if s and isinstance(s, str) and s.startswith("enc:"):
         try:
             return _fernet().decrypt(s[4:].encode()).decode()
@@ -55,7 +68,34 @@ def decrypt(s: str) -> str:
             return ""
     return s or ""
 
-TERMINAL = ("done", "blocked", "error", "interrupted")
+
+def rotate_secrets() -> dict:
+    """Re-encrypt every stored secret under the CURRENT key (first of ATM_SECRET_KEY).
+
+    Run after prepending a new key:  ATM_SECRET_KEY=<new>,<old> python -m web.rotate_keys
+    Then drop <old> from the variable."""
+    counts = {"projects": 0, "sessions": 0}
+    with _write_lock, _conn() as c:
+        for row in c.execute("SELECT id, config FROM projects").fetchall():
+            cfg = json.loads(row["config"]) if row["config"] else {}
+            touched = False
+            for f in SECRET_FIELDS:
+                v = cfg.get(f)
+                if isinstance(v, str) and v.startswith("enc:"):
+                    plain = decrypt(v)
+                    if plain:
+                        cfg[f] = encrypt(plain); touched = True
+            if touched:
+                c.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), row["id"]))
+                counts["projects"] += 1
+        for row in c.execute("SELECT sid, token FROM sessions").fetchall():
+            plain = decrypt(row["token"] or "")
+            if plain:
+                c.execute("UPDATE sessions SET token=? WHERE sid=?", (encrypt(plain), row["sid"]))
+                counts["sessions"] += 1
+    return counts
+
+TERMINAL = ("done", "blocked", "error", "interrupted", "cancelled", "timed_out")
 
 
 def _conn() -> sqlite3.Connection:
@@ -269,6 +309,25 @@ def get_run(run_id: str) -> dict | None:
         for k in ("tracks", "inputs", "story", "result"):
             d[k] = json.loads(d[k]) if d.get(k) else None
         return d
+
+
+# ---------- cancellation ----------
+_CANCELLED: set[str] = set()     # in-process fast path; the DB row is the durable record
+
+
+def request_cancel(run_id: str) -> None:
+    _CANCELLED.add(run_id)
+    with _write_lock, _conn() as c:
+        c.execute("UPDATE runs SET status='cancelling', updated_at=? WHERE id=? AND status IN ('queued','running')",
+                  (time.time(), run_id))
+
+
+def cancel_requested(run_id: str) -> bool:
+    if run_id in _CANCELLED:
+        return True
+    with _conn() as c:
+        r = c.execute("SELECT status FROM runs WHERE id=?", (run_id,)).fetchone()
+    return bool(r and r["status"] == "cancelling")
 
 
 def run_status(run_id: str) -> str | None:

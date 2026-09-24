@@ -6,7 +6,7 @@ gate) is one file. It self-registers via SPECS and is fully self-contained
 """
 from pathlib import Path
 
-from ...config import GENERATED_DIR
+from ... import sandbox
 from ...llm import call_llm_json
 from ...mocks import MOCK_RESPONSES
 from ...registry import AgentSpec, DisplayNode
@@ -32,7 +32,7 @@ def generate_a11y(state: PipelineState) -> dict:
     raw = call_llm_json("a11y_agent", SYSTEM, f"Acceptance criteria:\n{ac}{ctx}")
     arts = list(state.get("a11y_artifacts", []))
     for f in raw["files"]:
-        out = GENERATED_DIR / Path(f["path"]).relative_to("generated")
+        out = sandbox.run_workspace() / Path(f["path"]).relative_to("generated")
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(f["content"])
         arts.append({"type": "a11y", "path": str(out), "tags": f.get("tags", [])})

@@ -12,8 +12,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from .. import runctx
-from ..config import GENERATED_DIR
+from .. import runctx, sandbox
 from ..integration import go_coverage as gocov
 from ..llm import call_llm_json
 from ..mocks import MOCK_RESPONSES
@@ -86,7 +85,7 @@ def generate_go_tests(state: PipelineState) -> dict:
     files = [f for f in (raw.get("files") or []) if f.get("content") and f.get("path", "").endswith("_test.go")]
     skipped = raw.get("skipped") or []
 
-    out_dir = GENERATED_DIR / "coverage" / "tests"
+    out_dir = sandbox.run_workspace("coverage/tests")
     arts = list(state.get("coverage_artifacts", []))
     for f in files:
         dst = out_dir / f["path"]
@@ -104,7 +103,8 @@ def generate_go_tests(state: PipelineState) -> dict:
             dst.parent.mkdir(parents=True, exist_ok=True)
             dst.write_text(f["content"])
             placed.append(dst)
-        t = subprocess.run(["go", "test", "./..."], cwd=str(root), capture_output=True, text=True, timeout=600)
+        t = subprocess.run(["go", "test", "./..."], cwd=str(root), capture_output=True, text=True, timeout=600,
+                           env=sandbox.child_env())
         if t.returncode == 0:
             verified = True
             rep2 = gocov.run_go_coverage(str(root))
