@@ -7,6 +7,7 @@ Standardisation rule: every runner/agent emits its native report PLUS a standard
   * SBOM           → CycloneDX   (see security_scan.scan_sbom)
   * test cases     → YAML intent DSL (see functional_case_agent)
 """
+import re
 import time
 from collections import defaultdict
 from xml.sax.saxutils import escape, quoteattr
@@ -84,8 +85,15 @@ def parse_cover_func(text: str) -> dict:
             total = pctf
             continue
         loc, fn = parts[0], parts[1]
-        file, _, line = loc.rpartition(":")
-        funcs.append({"file": file, "line": int(line) if line.isdigit() else None, "func": fn, "pct": pctf})
+        # `go tool cover -func` emits "path/file.go:238:" (trailing colon) and some toolchains
+        # emit "path/file.go:238:17" (line:col). Take the first integer after the path.
+        m = re.match(r"^(?P<file>.*?\.go):(?P<line>\d+)(?::\d+)?:?$", loc.strip())
+        if m:
+            file, line = m.group("file"), int(m.group("line"))
+        else:
+            file, _, rest = loc.strip().rstrip(":").rpartition(":")
+            file, line = (file, int(rest)) if rest.isdigit() else (loc.strip(), None)
+        funcs.append({"file": file, "line": line, "func": fn, "pct": pctf})
     return {"funcs": funcs, "total_pct": total,
             "uncovered": [f for f in funcs if f["pct"] == 0.0]}
 

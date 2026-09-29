@@ -35,3 +35,6 @@ vscode-extension/*.vsix
 # ---- Misc ----
 .DS_Store
 *.log
+
+# Local recovery snapshots (never commit - may contain retired URLs/credentials)
+backups/

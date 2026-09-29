@@ -1157,7 +1157,7 @@ function placeAgent(id){
   const oy=ORCH_Y+ORH/2, ny=y-NODE_H/2, my=(oy+ny)/2;
   edgeEls[id]=el('path',{class:'edge', d:`M${OX},${oy} C${OX},${my} ${x},${my} ${x},${ny}`},edgeLayer);
 
-  const g=el('g',{class:'gnode enter agent', transform:`translate(${x},${y})`, style:`--cc:${col.color}`},nodeLayer);
+  const g=el('g',{class:`gnode${REPLAY_SILENT?'':' enter'} agent`, transform:`translate(${x},${y})`, style:`--cc:${col.color}`},nodeLayer);
   el('rect',{class:'nodeBox', x:-NODE_W/2, y:-NODE_H/2, width:NODE_W, height:NODE_H, rx:12},g);
   el('circle',{class:'port', cx:0, cy:-NODE_H/2, r:4.5},g);
   if(col.children.length) el('circle',{class:'port', cx:0, cy:NODE_H/2, r:4.5},g);
@@ -1182,7 +1182,7 @@ function placeChild(id){
   const y1=(j===0 ? (nodes[parentId]?nodes[parentId].y+NODE_H/2:ROW_Y+NODE_H/2) : CHILD_TOP+(j-1)*CHILD_PITCH+CH/2), y2=y-CH/2, mid=(y1+y2)/2;
   edgeEls[id]=el('path',{class:'edge', d:`M${x},${y1} C${x},${mid} ${x},${mid} ${x},${y2}`},edgeLayer);
 
-  const g=el('g',{class:'gnode enter child', transform:`translate(${x},${y})`, style:`--cc:${c.color}`},nodeLayer);
+  const g=el('g',{class:`gnode${REPLAY_SILENT?'':' enter'} child`, transform:`translate(${x},${y})`, style:`--cc:${c.color}`},nodeLayer);
   el('rect',{class:'nodeBox', x:-CW/2, y:-CH/2, width:CW, height:CH, rx:10},g);
   el('circle',{class:'port', cx:0, cy:-CH/2, r:4},g);
   if(kids.length-1>j) el('circle',{class:'port', cx:0, cy:CH/2, r:4},g);
@@ -1916,16 +1916,29 @@ function connectStream(runId){
 // lands straight on Results (smooth) instead of flashing through the whole execution replay.
 let REPLAY_SILENT=false;
 function handleSSE(ev, data){
+  // A replay rebuilds the SAME execution view as a live run (graph + activity log) — REPLAY_SILENT
+  // only suppresses the motion (entry animation, thinking pulse, auto-jump delay), never the content.
   if(ev==='start'){ applyManifest(data.manifest); if(RUN){RUN.mock=data.mock; RUN.story=data.story; RUN.config=data.config;}
-    if(!REPLAY_SILENT){ buildStart(data.config); hubThink('perceiving story…', true); log(null,`Agent core started for <b>${data.story.id}</b> (${data.mock?'mock':'live Claude'})`); const ld=$('runsLive'); if(ld) ld.hidden=false; } }
-  else if(ev==='think'){ if(REPLAY_SILENT) return; sawThink=true; const nx=data.next&&data.next!=='finish'&&data.next!=='block'?` → ${data.next}`:''; hubThink(data.reasoning||('deciding'+nx), data.next!=='finish'); log(null,`<span style="color:var(--accent2)">🧠 core</span> ${escapeHtml(data.reasoning||'')}${nx?` <span class="n">${escapeHtml(nx)}</span>`:''}`); }
-  else if(ev==='node'){ accumulate(data); if(!REPLAY_SILENT) stepNode(data); }
+    buildStart(data.config);
+    if(REPLAY_SILENT){ $('graphStatus').textContent='replay'; $('modeTag').textContent='replay'; hubThink('replaying finished run', false);
+      log(null,`Replaying run <b>${escapeHtml(data.story.id)}</b> (${data.mock?'mock':'live Claude'}) — final state`); }
+    else { hubThink('perceiving story…', true); log(null,`Agent core started for <b>${data.story.id}</b> (${data.mock?'mock':'live Claude'})`); const ld=$('runsLive'); if(ld) ld.hidden=false; } }
+  else if(ev==='think'){ sawThink=true; const nx=data.next&&data.next!=='finish'&&data.next!=='block'?` → ${data.next}`:'';
+    if(!REPLAY_SILENT) hubThink(data.reasoning||('deciding'+nx), data.next!=='finish');
+    log(null,`<span style="color:var(--accent2)">🧠 core</span> ${escapeHtml(data.reasoning||'')}${nx?` <span class="n">${escapeHtml(nx)}</span>`:''}`); }
+  else if(ev==='node'){ accumulate(data); stepNode(data); }
   else if(ev==='done'){ if(RUN)RUN.status=data.status||'done'; renderResults(); streamFinished=true; closeStream(); refreshRuns(); { const ld=$('runsLive'); if(ld) ld.hidden=true; }
-    if(REPLAY_SILENT){ showView('results'); }
-    else { finalizeFrontier(); orchDone(data.status==='blocked'||data.status==='interrupted'?'blocked':'success'); clearEdges(); $('graphStatus').textContent=data.status||'done'; $('modeTag').textContent=data.status||'done'; log(null, data.status==='interrupted'?'<b style="color:var(--fail)">⚠ run was interrupted by a server restart</b>':'<b style="color:var(--ok)">✓ Agent core reached the goal</b>'); setTimeout(()=>{ if(CURRENT==='run') showView('results'); }, 700); } }
+    finalizeFrontier(); clearEdges();
+    if(REPLAY_SILENT){ orchDone(data.status==='blocked'||data.status==='interrupted'?'blocked':'success');
+      $('graphStatus').textContent=(data.status||'done')+' · replay'; $('modeTag').textContent=data.status||'done';
+      log(null,`<b style="color:${data.status==='done'?'var(--ok)':'var(--fail)'}">■ run finished — ${escapeHtml(data.status||'done')}</b>`);
+      showView('results'); }
+    else { orchDone(data.status==='blocked'||data.status==='interrupted'?'blocked':'success'); clearEdges(); $('graphStatus').textContent=data.status||'done'; $('modeTag').textContent=data.status||'done'; log(null, data.status==='interrupted'?'<b style="color:var(--fail)">⚠ run was interrupted by a server restart</b>':'<b style="color:var(--ok)">✓ Agent core reached the goal</b>'); setTimeout(()=>{ if(CURRENT==='run') showView('results'); }, 700); } }
   else if(ev==='error'){ if(RUN)RUN.status='error'; streamFinished=true; closeStream(); refreshRuns(); { const ld=$('runsLive'); if(ld) ld.hidden=true; }
-    if(REPLAY_SILENT){ renderResults(); showView('results'); }
-    else { finalizeFrontier(); hubThink('error', false); $('graphStatus').textContent='error'; log(null,`<b style="color:var(--fail)">✗ ${escapeHtml(data.message)}</b>`); } }
+    finalizeFrontier(); clearEdges();
+    if(REPLAY_SILENT){ orchDone('blocked'); $('graphStatus').textContent='error · replay';
+      log(null,`<b style="color:var(--fail)">✗ ${escapeHtml(data.message||'run errored')}</b>`); renderResults(); showView('results'); }
+    else { hubThink('error', false); $('graphStatus').textContent='error'; log(null,`<b style="color:var(--fail)">✗ ${escapeHtml(data.message)}</b>`); } }
 }
 // Reopen a run: a FINISHED run goes straight to Results (silent replay); a LIVE run shows the graph.
 function resumeRun(runId){
