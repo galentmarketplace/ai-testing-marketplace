@@ -110,7 +110,10 @@ class PipelineState(TypedDict, total=False):
     test_artifacts: list[dict]     # [TestArtifact]
     run_results: list[dict]        # [RunResult] (append-only history)
     gate_decisions: list[dict]     # [GateDecision] (append-only history)
-    regression_tags: list[str]     # selected by Regression Agent
+    regression_tags: list[str]     # selected by Regression Agent (from the diff + real tag catalog)
+    regression_rationale: str      # why those suites, in the agent's words
+    regression_risk: str           # low | medium | high
+    regression_dropped_tags: list[str]  # tags the agent named that do not exist in the suite
     heal_notes: list[dict]         # self-healing agent's repair log (only real repairs)
     heal_escalations: list[dict]   # suspected PRODUCT defects — never auto-healed, raised for a human
     attempts: dict                 # {"generate_code": 1, "generate_ui_scripts": 2, ...}

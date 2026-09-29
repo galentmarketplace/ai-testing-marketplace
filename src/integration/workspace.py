@@ -12,6 +12,7 @@ install just to exist.
 """
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -104,3 +105,81 @@ def cleanup_run(run_id: str = "") -> int:
         except Exception:
             pass
     return len(entries)
+
+
+def diff_summary(workdir: str | Path, max_bytes: int = 12_000) -> dict:
+    """What actually changed, as evidence for impact analysis.
+
+    Regression selection reasoned from the ticket text alone is a guess. The diff is the
+    only thing that says which code was really touched, so it is what the selector gets.
+    """
+    wd = Path(workdir)
+    files = changed_files(wd)
+    if not files:
+        return {"files": [], "diff": "", "truncated": False}
+    rc, out = _git(["diff", "--unified=2", "--no-color", "--", *files[:60]], wd)
+    if rc != 0 or not out.strip():
+        # Newly added files are untracked, so `git diff` shows nothing for them.
+        rc, out = _git(["diff", "--no-index", "--no-color", "/dev/null", files[0]], wd)
+        out = out if rc in (0, 1) else ""
+    truncated = len(out) > max_bytes
+    return {"files": files, "diff": out[:max_bytes], "truncated": truncated}
+
+
+_TAG = re.compile(r"@([A-Za-z][\w-]{1,30})")
+# A test tag only counts where tags actually live: inside a test/describe/it title, in a
+# Playwright `tag:` array, or at the start of a Gherkin line. Scanning whole files instead
+# picks up JSDoc (@param) and npm scopes (@babel, @testing-library) and offers them as
+# runnable suites, so the selector chooses tags that match nothing.
+# CSS at-rules and doc annotations survive even a position-aware scan (a JS file holding a
+# CSS string, a decorator on a test). They are never runnable suites.
+_NOT_TAGS = {
+    "charset", "import", "media", "page", "supports", "keyframes", "font-face", "namespace",
+    "param", "params", "returns", "return", "type", "typedef", "throws", "example",
+    "deprecated", "see", "since", "author", "license", "module", "property", "prop",
+    "default", "override", "implements", "extends", "constructor", "async", "await",
+    "todo", "fixme", "link", "inheritdoc", "template", "callback", "yields", "description",
+    "summary", "file", "fileoverview", "version", "class", "interface", "enum", "readonly",
+    "public", "private", "protected", "static", "abstract", "pytest", "fixture", "mark",
+}
+
+_TEST_DECL = re.compile(r"\b(?:test|it|describe|scenario)\s*(?:\.\w+)?\s*\(")
+_TAG_ARRAY = re.compile(r"\btags?\s*[:=]")
+
+
+def catalog_tags(repo: str | Path, limit: int = 60) -> list[str]:
+    """Tags that actually exist in a test suite, so selection picks real suites.
+
+    Without this the selector invents plausible-sounding tags that match nothing, and the
+    regression run silently executes zero tests while reporting success.
+    """
+    root = Path(repo)
+    if not root.is_dir():
+        return []
+    found: dict[str, int] = {}
+    for p in root.rglob("*"):
+        if p.suffix not in {".ts", ".js", ".tsx", ".jsx", ".py", ".feature"}:
+            continue
+        rel = p.relative_to(root)
+        if any(part in _SKIP for part in rel.parts):
+            continue
+        try:
+            text = p.read_text(errors="replace")
+        except Exception:
+            continue
+        gherkin = p.suffix == ".feature"
+        for line in text.splitlines():
+            stripped = line.strip()
+            if gherkin:
+                if not stripped.startswith("@"):
+                    continue
+            elif not (_TEST_DECL.search(line) or _TAG_ARRAY.search(line)):
+                continue
+            if not gherkin and "import" in stripped[:12]:
+                continue
+            for m in _TAG.findall(stripped):
+                if m.lower() in _NOT_TAGS:
+                    continue
+                found[m] = found.get(m, 0) + 1
+    ordered = sorted(found.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [f"@{t}" for t, _ in ordered[:limit]]
