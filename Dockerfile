@@ -31,6 +31,17 @@ RUN set -eux; \
     chmod +x /usr/local/bin/k6 /usr/local/bin/kubectl; \
     k6 version; kubectl version --client=true
 
+# Go toolchain — the coverage agent shells out to `go test -coverprofile`. Without it the
+# COVERAGE track silently degrades to "go not available" on every Go repository.
+ENV GO_VERSION=1.23.4
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in amd64) GOARCH=amd64 ;; arm64) GOARCH=arm64 ;; *) echo "unsupported $arch"; exit 1 ;; esac; \
+    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${GOARCH}.tar.gz" | tar -xz -C /usr/local; \
+    ln -s /usr/local/go/bin/go /usr/local/bin/go; \
+    go version
+ENV GOPATH=/tmp/go GOCACHE=/tmp/go-build GOFLAGS=-mod=mod
+
 WORKDIR /app
 
 # Python deps first (layer cache)
@@ -51,13 +62,19 @@ RUN mkdir -p data generated repos
 VOLUME ["/app/data", "/app/generated", "/app/repos"]
 
 # Run as a non-root user; the state dirs it must write are chowned below.
-RUN useradd --create-home --uid 10001 atm && chown -R atm:atm /app /ms-playwright
+# /data exists and is owned by the app user so an externally mounted volume there is
+# writable. Without it the container dies on start: a non-root user cannot create a
+# directory at the filesystem root.
+RUN useradd --create-home --uid 10001 atm \
+ && mkdir -p /data /app/data /app/generated /app/repos \
+ && chown -R atm:atm /app /data /ms-playwright
 USER atm
 
 ENV PYTHONPATH=/app \
     PORT=8090 \
     MOCK_LLM=0 \
     REAL_RUNNER=1
+ENV HOST=0.0.0.0
 EXPOSE 8090
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

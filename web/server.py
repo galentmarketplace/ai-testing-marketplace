@@ -775,5 +775,10 @@ def index():
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", "8000"))
-    print(f"\n  Agentic Testing Pipeline UI → http://127.0.0.1:{port}\n")
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    # Bind loopback by default (a dev server should not be exposed on every interface),
+    # but a container MUST bind 0.0.0.0 or its published port reaches nothing. Docker sets
+    # no reliable marker, so the deployment supplies HOST explicitly.
+    host = os.environ.get("HOST") or ("0.0.0.0" if os.path.exists("/.dockerenv") else "127.0.0.1")  # noqa: S104
+    shown = "127.0.0.1" if host in ("127.0.0.1", "localhost") else host
+    print(f"\n  Agentic Testing Pipeline UI → http://{shown}:{port}\n")
+    uvicorn.run(app, host=host, port=port, log_level="warning")

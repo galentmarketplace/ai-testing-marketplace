@@ -1,0 +1,57 @@
+# Fly.io deployment for the AI Testing Marketplace.
+#
+#   fly launch --copy-config --config deploy/fly.toml --no-deploy
+#   fly volumes create atm_data --size 10 --region <your-region>
+#   fly secrets set ANTHROPIC_API_KEY=... GITHUB_TOKEN=... ATM_SECRET_KEY=... (see docs/DEPLOY.md)
+#   fly deploy
+#
+# Sizing is not arbitrary: the image carries Chromium, and a Playwright run in a 512 MB
+# machine is killed mid-test, which surfaces as flaky failures rather than an out-of-memory
+# error. 2 GB is the floor for this workload.
+
+app = "ai-testing-marketplace"
+primary_region = "sin"          # Singapore, matching the existing Postgres region
+
+[build]
+  dockerfile = "../Dockerfile"
+
+[env]
+  PORT = "8090"
+  MOCK_LLM = "0"                # real model calls
+  REAL_RUNNER = "1"             # actually execute Playwright and k6
+  ATM_DATA_DIR = "/app/data"
+  ATM_GENERATED_DIR = "/app/data/generated"
+  PLAYWRIGHT_BROWSERS_PATH = "/ms-playwright"
+
+# SQLite, the Fernet key and every run artifact live here. Without a volume they are lost
+# on each deploy, taking the audit trail and all run history with them.
+[[mounts]]
+  source = "atm_data"
+  destination = "/app/data"   # matches docker-compose; the image chowns /app to the app user
+
+[http_service]
+  internal_port = 8090
+  force_https = true
+  # A run executes in a background thread in this process. Stopping the machine mid-run
+  # would abandon it, so the platform stays up rather than scaling to zero.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 40
+    hard_limit = 80
+
+[checks]
+  [checks.health]
+    type = "http"
+    port = 8090
+    path = "/api/manifest"      # unauthenticated by design, so it is a valid liveness probe
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "60s"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "2gb"

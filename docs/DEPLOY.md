@@ -7,10 +7,32 @@ Two shapes, depending on what you need:
 | Effort | ~15 min | ~1 hour |
 | Public URL for the VS Code extension | ✅ | ✅ |
 | **Per-pod CPU/memory performance validation** | ❌ (no cluster) | ✅ |
-| Cost on Oracle Always Free | $0 | $0 |
+| Typical cost | ~€4-6/mo VPS | cluster-dependent |
 
 Start with the VM if you just need a hosted instance; add Kubernetes when you want the per-pod
 capacity story.
+
+## Before you pick a host: the sizing constraint
+
+**2 GB of RAM is the floor, 4 GB if Jenkins runs alongside.** The image carries Chromium, and
+on a 512 MB or 1 GB instance Playwright is killed mid-run. That surfaces as flaky test
+failures rather than an out-of-memory error, which is a genuinely painful thing to debug.
+This rules out most "free tier" instances, including Render's free plan.
+
+The image itself is 1.2 GB and carries Python 3.13, Node 20, Go 1.23, k6, kubectl, semgrep and
+Chromium, because the platform shells out to all of them.
+
+## One-command options
+
+| Target | Command | Notes |
+|---|---|---|
+| **Any Ubuntu/Debian VPS** | `bash deploy/vps-bootstrap.sh` | Cheapest always-on. Installs Docker, clones, generates the encryption key, builds and health-checks. Idempotent — re-run to upgrade |
+| **Fly.io** | `fly launch --copy-config --config deploy/fly.toml` | Then create the volume and set secrets, see the file's header |
+| **Local** | `docker compose up --build` | Same image, for trying it before committing to a host |
+
+Both configs mount persistent state at `/app/data`. That path matters: the container runs as
+a non-root user, and a volume mounted anywhere the image has not chowned makes the container
+die on start with a permission error.
 
 ---
 ## Option A — single VM (Docker Compose)
