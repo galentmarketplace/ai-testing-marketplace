@@ -33,6 +33,7 @@ from src.config import GENERATED_DIR
 from src.graph import build_graph
 from src.integration import deployer, jira, oidc
 from src.integration import github as gh
+from src.integration import workspace as appws
 from src.main import DEFAULT_STORY
 from src.orchestrator import orchestrate
 from src.registry import build_manifest
@@ -352,8 +353,10 @@ def _execute_run(run_id: str, req: RunRequest, github_token: str | None):
         # Never leave an app the run booted still listening — including when the run crashed,
         # was cancelled, or hit its deadline.
         torn = deployer.teardown_run(run_id)
-        if torn:
-            observability.log("atm.run", "tore down run deployments", deployments=torn)
+        trees = appws.cleanup_run(run_id)
+        if torn or trees:
+            observability.log("atm.run", "released run resources",
+                              deployments=torn, worktrees=trees)
 
 
 @app.post("/api/run")

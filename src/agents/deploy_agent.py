@@ -28,7 +28,14 @@ _MOCK = {"ok": True, "url": "http://127.0.0.1:41234", "strategy": "node (mock)",
 
 
 def _repo_path(state: PipelineState) -> str | None:
-    """The APPLICATION repo (what we deploy), not the test repo."""
+    """The APPLICATION repo (what we deploy), not the test repo.
+
+    The Dev Agent's per-run working copy wins: deploying the analyzer's pristine cache would
+    boot the app WITHOUT the feature this run just implemented, and every test would then
+    pass against code that does not contain the change.
+    """
+    if state.get("app_workdir"):
+        return state["app_workdir"]
     a = state.get("repo_analysis") or {}
     if a.get("path"):
         return a["path"]

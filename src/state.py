@@ -103,6 +103,9 @@ class PipelineState(TypedDict, total=False):
     functional_cases: list[dict]   # Functional Test Case agent output (derived from the AC / Jira)
     functional_artifacts: list[dict]  # the functional-test-cases document(s)
     code_artifacts: list[dict]     # [CodeArtifact]
+    app_workdir: str               # per-run working copy of the app repo the Dev Agent edits
+    changed_files: list[str]       # repo-relative paths the Dev Agent actually changed
+    dev_note: str                  # one-line summary of what the Dev Agent implemented
     deployment: dict               # {ok,url,strategy,port,log} — the booted app under test
     test_artifacts: list[dict]     # [TestArtifact]
     run_results: list[dict]        # [RunResult] (append-only history)
