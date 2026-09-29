@@ -4,26 +4,34 @@ import sqlite3
 from web import store
 
 
+# Sentinels must be long and distinctive: base64 ciphertext can contain a short needle like "pw"
+# purely by chance, which made an earlier version of this test fail about 1 run in 8.
+JIRA_SENTINEL = "jira-token-sentinel-7f3ab91c"
+PW_SENTINEL = "login-password-sentinel-4d2e8a06"
+
+
 def test_project_secrets_encrypted_and_redacted():
-    pid = store.save_project("carol", "cfg", {"jira_token": "tok-123", "login_password": "pw", "app_url": "https://a"})
+    pid = store.save_project("carol", "cfg", {"jira_token": JIRA_SENTINEL,
+                                              "login_password": PW_SENTINEL, "app_url": "https://a"})
     raw = sqlite3.connect(store.DB_PATH).execute("SELECT config FROM projects WHERE id=?", (pid,)).fetchone()[0]
-    assert "tok-123" not in raw and "pw" not in raw and "enc:" in raw
+    assert JIRA_SENTINEL not in raw and PW_SENTINEL not in raw and "enc:" in raw
     public = store.get_project(pid)
     assert "jira_token" not in public and public["has_jira_token"] is True and public["app_url"] == "https://a"
-    assert store.get_project(pid, reveal=True)["jira_token"] == "tok-123"
+    revealed = store.get_project(pid, reveal=True)
+    assert revealed["jira_token"] == JIRA_SENTINEL and revealed["login_password"] == PW_SENTINEL
 
 
 def test_blank_secret_keeps_the_existing_value():
-    pid = store.save_project("carol", "cfg2", {"jira_token": "keepme"})
+    pid = store.save_project("carol", "cfg2", {"jira_token": "keepme-sentinel-b81f"})
     store.save_project("carol", "cfg2", {"jira_token": "", "app_url": "https://b"}, project_id=pid)
-    assert store.get_project(pid, reveal=True)["jira_token"] == "keepme"
+    assert store.get_project(pid, reveal=True)["jira_token"] == "keepme-sentinel-b81f"
 
 
 def test_rotation_preserves_every_secret():
-    pid = store.save_project("carol", "rot", {"jira_token": "rot-secret"})
+    pid = store.save_project("carol", "rot", {"jira_token": "rot-secret-sentinel-c47d"})
     store.save_session("sid-rot", "gho_rot", "carol", "")
     store.rotate_secrets()
-    assert store.get_project(pid, reveal=True)["jira_token"] == "rot-secret"
+    assert store.get_project(pid, reveal=True)["jira_token"] == "rot-secret-sentinel-c47d"
     assert next(s for s in store.all_sessions() if s["sid"] == "sid-rot")["token"] == "gho_rot"
 
 
