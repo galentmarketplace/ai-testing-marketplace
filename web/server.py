@@ -545,6 +545,9 @@ def _fold_run(run_id: str) -> dict:
             "security": {k: sec.get(k) for k in ("total", "by_severity", "methodologies_run")} if sec else None,
             "coverage": {k: (st.get("coverage_report") or {}).get(k) for k in ("total_pct", "min_pct", "uncovered_funcs")}
                         if st.get("coverage_report") else None,
+            # Self-heal is reported as two separate facts: what was actually repaired, and what
+            # was refused as a suspected product defect. Collapsing them would hide real bugs.
+            "healed": st.get("heal_notes"), "escalations": st.get("heal_escalations"),
             "artifacts": arts[:40], "jira_reported": st.get("jira_reported")}
 
 

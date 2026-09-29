@@ -28,6 +28,17 @@ from .registry import BY_ID, plan_for
 MAX_ITERS = 60  # runaway backstop, not a quality gate
 
 
+def product_defects(state: dict) -> list[dict]:
+    """Suspected PRODUCT defects raised by triage.
+
+    Retrying cannot fix a broken application: the next attempt fails identically after a
+    full redeploy and suite run. When any of these exist the run blocks immediately rather
+    than spending its retry budget, so the real bug reaches a human fast.
+    """
+    return [e for e in (state.get("heal_escalations") or [])
+            if e.get("kind") == "product_defect"]
+
+
 def _latest_verdict(state: dict, gate_name: str) -> str:
     for g in reversed(state.get("gate_decisions", [])):
         if g["gate"] == gate_name:
@@ -177,6 +188,18 @@ def orchestrate(story: dict, config: dict | None = None, max_iters: int = MAX_IT
         # gate outcome: on failure, loop back (reset fixer + chain + gate) or block
         if spec.kind == "gate" and spec.gate_name:
             if _latest_verdict(state, spec.gate_name) == "fail":
+                # A suspected PRODUCT defect is not something retrying can fix: the app is
+                # wrong, so the next attempt fails identically. Surface the real bug now
+                # instead of burning the whole retry budget (each cycle redeploys and reruns).
+                prod = product_defects(state)
+                if prod:
+                    state["status"] = "blocked"
+                    names = ", ".join(sorted({e.get("test", "?") for e in prod}))[:160]
+                    yield {"type": "think", "iteration": it, "next": "block",
+                           "reasoning": (f"{spec.gate_name} failed and triage found a suspected "
+                                         f"PRODUCT defect ({names}) — blocking for human review "
+                                         "rather than healing the test to pass.")}
+                    break
                 r = retries.get(spec.id, 0) + 1
                 retries[spec.id] = r
                 if r > spec.max_retries:

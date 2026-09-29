@@ -111,7 +111,8 @@ class PipelineState(TypedDict, total=False):
     run_results: list[dict]        # [RunResult] (append-only history)
     gate_decisions: list[dict]     # [GateDecision] (append-only history)
     regression_tags: list[str]     # selected by Regression Agent
-    heal_notes: list[dict]         # self-healing agent's repair log (on QG2 failure)
+    heal_notes: list[dict]         # self-healing agent's repair log (only real repairs)
+    heal_escalations: list[dict]   # suspected PRODUCT defects — never auto-healed, raised for a human
     attempts: dict                 # {"generate_code": 1, "generate_ui_scripts": 2, ...}
     pr: dict                       # {"url": ..., "summary": ...}
     status: str                    # running | blocked | done | failed
