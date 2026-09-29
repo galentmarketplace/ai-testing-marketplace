@@ -3,9 +3,11 @@
 The runner executes scripts and reports facts. It never uses an LLM.
 (Design doc: "never let an LLM decide whether tests passed.")
 
-SKELETON NOTE: real implementations are sketched in comments. The stub returns
-simulated RunResults so the graph/gate logic can be developed and demoed.
-Set REAL_RUNNER=1 once Playwright/k6/Jest are installed and IDURAR is running.
+Execution is REAL by default: with REAL_RUNNER=1 (the shipped default) this shells out to
+`npx playwright test` and `k6 run` and reports their actual exit codes and JUnit/JSON output.
+Simulated RunResults are produced only for a mock run or when REAL_RUNNER is off, and such a
+run is labelled as mock everywhere it surfaces — a simulated pass must never be mistaken for
+a real one.
 """
 import os
 import re
