@@ -109,8 +109,11 @@ def test_report(job: str, number: int) -> dict | None:
         d = _json(f"{jp}/{number}/testReport/api/json")
     except urllib.error.HTTPError:
         return None
-    return {"passed": d.get("passCount", 0), "failed": d.get("failCount", 0),
-            "skipped": d.get("skipCount", 0), "total": d.get("totalCount", 0)}
+    passed, failed = d.get("passCount", 0) or 0, d.get("failCount", 0) or 0
+    skipped = d.get("skipCount", 0) or 0
+    # Some report types omit totalCount; derive it so "total" is never 0 alongside passes.
+    return {"passed": passed, "failed": failed, "skipped": skipped,
+            "total": d.get("totalCount") or (passed + failed + skipped)}
 
 
 def failed_cases(job: str, number: int, limit: int = 20) -> list[dict]:

@@ -53,11 +53,11 @@ jobs:
                   }
                   stage('Playwright') {
                     steps {
-                      sh 'export PLAYWRIGHT_BROWSERS_PATH=/ms-playwright; export PLAYWRIGHT_JUNIT_OUTPUT_NAME=results/junit.xml; if [ -n "$GREP" ]; then npx playwright test --reporter=junit --grep "$GREP" || true; else npx playwright test --reporter=junit || true; fi'
+                      sh 'export PLAYWRIGHT_BROWSERS_PATH=/ms-playwright; export PLAYWRIGHT_JUNIT_OUTPUT_NAME=results/junit.xml; if [ -n "$GREP" ]; then npx playwright test --reporter=junit --grep "$GREP"; else npx playwright test --reporter=junit; fi'
                     }
                   }
                 }
-                post { always { junit allowEmptyResults: true, testResults: 'results/junit.xml' } }
+                post { always { junit allowEmptyResults: false, testResults: 'results/junit.xml' } }
               }
             ''')
           }

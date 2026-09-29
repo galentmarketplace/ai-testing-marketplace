@@ -165,6 +165,15 @@ def run_jenkins(state: PipelineState) -> dict:
                 failures.append({"test": f"[{label}] build {r.get('result')}",
                                  "error": (r.get("console", "") or "")[-600:]})
                 failed += 1 if rep.get("failed", 0) == 0 else 0
+            # A GREEN build that ran ZERO tests is the worst outcome: it reads as success while
+            # verifying nothing (bad --grep, a suite that never got committed, an early exit).
+            # "No evidence" is not "no failures", so it fails the gate.
+            elif r.get("result") == "SUCCESS" and rep.get("passed", 0) + rep.get("failed", 0) == 0:
+                failures.append({"test": f"[{label}] no tests executed",
+                                 "error": ("The build was green but published no test results. "
+                                           "A build that verifies nothing cannot gate a merge. "
+                                           + (r.get("console", "") or "")[-400:])})
+                failed += 1
             print(f"  [Jenkins] {label}: #{r['number']} {r['result']} "
                   f"({rep.get('passed', 0)}✓ {rep.get('failed', 0)}✗) {r['url']}")
         except Exception as exc:
