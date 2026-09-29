@@ -228,3 +228,51 @@ def scan_framework(full_name: str) -> dict:
         "helpers": helpers[:40], "scripts": pkg.get("scripts", {}),
         "file_count": len(paths),
     }
+
+
+def pr_status(full_name: str, number: int) -> dict:
+    """Everything needed to decide whether a PR may merge: review decision, checks, state.
+
+    Read straight from GitHub rather than inferred, because the merge decision must reflect
+    what the branch protection rules will actually enforce.
+    """
+    pr = _req("GET", f"/repos/{full_name}/pulls/{number}")
+    sha = (pr.get("head") or {}).get("sha", "")
+    checks, conclusions = [], []
+    if sha:
+        runs = _req("GET", f"/repos/{full_name}/commits/{sha}/check-runs").get("check_runs", [])
+        for c in runs:
+            checks.append({"name": c.get("name"), "status": c.get("status"),
+                           "conclusion": c.get("conclusion")})
+            conclusions.append(c.get("conclusion"))
+    reviews = _req("GET", f"/repos/{full_name}/pulls/{number}/reviews")
+    # Only the LATEST review per reviewer counts; an approval can be superseded by a later
+    # request for changes from the same person.
+    latest: dict[str, str] = {}
+    for r in reviews:
+        who = ((r.get("user") or {}).get("login") or "")
+        st = (r.get("state") or "").upper()
+        if who and st in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
+            latest[who] = st
+    approvals = sum(1 for v in latest.values() if v == "APPROVED")
+    changes_requested = any(v == "CHANGES_REQUESTED" for v in latest.values())
+    pending = [c for c in checks if c["status"] != "completed"]
+    failing = [c for c in checks if c["conclusion"] not in (None, "success", "neutral", "skipped")]
+    return {
+        "number": number, "state": pr.get("state"), "draft": bool(pr.get("draft")),
+        "merged": bool(pr.get("merged")), "mergeable": pr.get("mergeable"),
+        "mergeable_state": pr.get("mergeable_state"), "head_sha": sha,
+        "title": pr.get("title", ""), "checks": checks,
+        "checks_pending": len(pending), "checks_failing": len(failing),
+        "approvals": approvals, "changes_requested": changes_requested,
+    }
+
+
+def merge_pr(full_name: str, number: int, method: str = "squash",
+             commit_title: str | None = None) -> dict:
+    """Merge a pull request. GitHub still enforces branch protection, so this cannot bypass
+    a failing check or a missing approval — it will return an error instead."""
+    body: dict = {"merge_method": method}
+    if commit_title:
+        body["commit_title"] = commit_title
+    return _req("PUT", f"/repos/{full_name}/pulls/{number}/merge", body)

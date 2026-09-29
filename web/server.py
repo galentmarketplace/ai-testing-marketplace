@@ -31,7 +31,7 @@ from pydantic import BaseModel
 from src import observability, runctx, sandbox
 from src.config import GENERATED_DIR
 from src.graph import build_graph
-from src.integration import deployer, jira, oidc
+from src.integration import deployer, jira, oidc, webhooks
 from src.integration import github as gh
 from src.integration import workspace as appws
 from src.main import DEFAULT_STORY
@@ -357,6 +357,93 @@ def _execute_run(run_id: str, req: RunRequest, github_token: str | None):
         if torn or trees:
             observability.log("atm.run", "released run resources",
                               deployments=torn, worktrees=trees)
+
+
+# ---------- Inbound webhooks (unauthenticated endpoints: signature-verified) ----------
+# These are what make the platform autonomous rather than something a person drives. Both
+# verify a signature BEFORE the payload is treated as meaningful, and both are audited.
+
+@app.post("/api/webhooks/jira")
+async def webhook_jira(request: Request):
+    """A Jira ticket reaching a trigger status starts a run, with no human involved."""
+    raw = await request.body()
+    presented = (request.headers.get("x-atm-signature")
+                 or request.headers.get("x-hub-signature") or "")
+    if not webhooks.verify_jira(presented):
+        _audit(request, None, "webhook.jira", "-", "denied", reason="bad or missing secret")
+        raise HTTPException(401, "invalid webhook signature")
+    try:
+        payload = json.loads(raw or b"{}")
+    except ValueError:
+        raise HTTPException(400, "payload is not JSON") from None
+
+    event = webhooks.parse_jira_event(payload)
+    ok, why = webhooks.should_start_run(event)
+    if not ok:
+        _audit(request, None, "webhook.jira", event.get("key") or "-", "ignored", reason=why)
+        return {"started": False, "reason": why}
+
+    project_id = os.environ.get("ATM_WEBHOOK_PROJECT_ID", "")
+    if not project_id:
+        _audit(request, None, "webhook.jira", event["key"], "error",
+               reason="ATM_WEBHOOK_PROJECT_ID is not configured")
+        raise HTTPException(503, "no project configured for webhook runs")
+
+    run_id = uuid.uuid4().hex
+    req = RunRequest(mock=False, mode="full", project_id=project_id, ticket=event["key"],
+                     story={"id": event["key"], "title": event.get("summary") or event["key"],
+                            "description": ""})
+    login = os.environ.get("ATM_WEBHOOK_LOGIN", SERVICE_LOGIN)
+    store.create_run(run_id, login, event.get("summary") or event["key"], req.mode,
+                     req.tracks, _redact(req.inputs), _redact(req.story))
+    threading.Thread(target=_execute_run, args=(run_id, req, None), daemon=True).start()
+    _audit(request, None, "webhook.jira", event["key"], "ok", run=run_id, reason=why)
+    return {"started": True, "run_id": run_id, "ticket": event["key"]}
+
+
+@app.post("/api/webhooks/github")
+async def webhook_github(request: Request):
+    """An approved pull request is merged — but only if GitHub agrees it may be."""
+    raw = await request.body()
+    if not webhooks.verify_github(raw, request.headers.get("x-hub-signature-256", "")):
+        _audit(request, None, "webhook.github", "-", "denied", reason="bad or missing signature")
+        raise HTTPException(401, "invalid webhook signature")
+    try:
+        payload = json.loads(raw or b"{}")
+    except ValueError:
+        raise HTTPException(400, "payload is not JSON") from None
+
+    ev = webhooks.parse_github_review_event(payload)
+    if ev["action"] != "submitted" or ev["review_state"] != "approved":
+        return {"merged": False, "reason": f"ignoring {ev['action']}/{ev['review_state'] or 'n/a'}"}
+    if not ev["repo"] or not ev["number"]:
+        raise HTTPException(400, "payload has no repository or pull request number")
+
+    target = f"{ev['repo']}#{ev['number']}"
+    if os.environ.get("ATM_AUTO_MERGE", "").lower() not in ("1", "true", "yes", "on"):
+        _audit(request, None, "pr.merge", target, "skipped", reason="auto-merge is disabled")
+        return {"merged": False, "reason": "auto-merge is disabled (set ATM_AUTO_MERGE=1)"}
+
+    # Never trust the event to mean "mergeable" — ask GitHub.
+    try:
+        status = gh.pr_status(ev["repo"], ev["number"])
+    except Exception as exc:
+        _audit(request, None, "pr.merge", target, "error", reason=str(exc)[:200])
+        raise HTTPException(502, f"could not read the pull request: {exc}") from None
+
+    allowed, why = webhooks.merge_allowed(
+        status, min_approvals=int(os.environ.get("ATM_MIN_APPROVALS", "1")))
+    if not allowed:
+        _audit(request, None, "pr.merge", target, "declined", reason=why)
+        return {"merged": False, "reason": why, "status": status}
+    try:
+        res = gh.merge_pr(ev["repo"], ev["number"],
+                          method=os.environ.get("ATM_MERGE_METHOD", "squash"))
+    except Exception as exc:
+        _audit(request, None, "pr.merge", target, "error", reason=str(exc)[:200])
+        return {"merged": False, "reason": f"merge refused by GitHub: {exc}"}
+    _audit(request, None, "pr.merge", target, "ok", reason=why, approver=ev["reviewer"])
+    return {"merged": True, "reason": why, "sha": res.get("sha")}
 
 
 @app.post("/api/run")
