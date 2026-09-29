@@ -13,8 +13,8 @@ import json
 
 from .. import runctx, sandbox
 from ..config import GATE_POLICY
+from ..integration import coverage, reports
 from ..integration import go_coverage as gocov
-from ..integration import reports
 from ..integration.repo_analyzer import _ensure_local
 from ..state import GateDecision, PipelineState
 
@@ -64,7 +64,11 @@ def go_coverage(state: PipelineState) -> dict:
         rep = dict(_MOCK)
     else:
         path = _repo_path(state)
-        rep = gocov.run_go_coverage(path) if path else {"ok": False, "error": "no repo path (configure a source repository)"}
+        # Dispatches by language (Go, Node, Python) and normalises through LCOV, so the
+        # gate and the standard exports are identical whatever the repo is written in.
+        lang = (inp.get("coverage_language") or "auto").strip().lower()
+        rep = (coverage.measure(path, language=lang) if path
+               else {"ok": False, "error": "no repo path (configure a source repository)"})
         if rep.get("ok"):
             print(f"  [Go Coverage] measuring {path} …")
 

@@ -98,6 +98,49 @@ def parse_cover_func(text: str) -> dict:
             "uncovered": [f for f in funcs if f["pct"] == 0.0]}
 
 
+def parse_lcov(text: str, root: str = "") -> dict:
+    """LCOV -> the same shape `parse_coverprofile` returns.
+
+    LCOV is the common currency: jest, vitest, nyc/c8 and coverage.py all emit it, so one
+    parser covers every non-Go language instead of a bespoke reader per tool.
+    Line coverage (DA records) is used; branch records are ignored deliberately, because
+    mixing the two produces a percentage that matches no tool's own number.
+    """
+    lines: dict[str, dict[int, int]] = {}
+    current = None
+    for raw in text.splitlines():
+        ln = raw.strip()
+        if ln.startswith("SF:"):
+            current = ln[3:].strip()
+            if root and current.startswith(root):
+                current = current[len(root):].lstrip("/")
+            lines.setdefault(current, {})
+        elif ln.startswith("DA:") and current is not None:
+            body = ln[3:].split(",")
+            if len(body) >= 2:
+                try:
+                    no, hits = int(body[0]), int(float(body[1]))
+                except ValueError:
+                    continue
+                prev = lines[current].get(no, 0)
+                lines[current][no] = max(prev, hits)
+        elif ln in ("end_of_record", "end_of_record;"):
+            current = None
+
+    files, total, covered = [], 0, 0
+    for path, m in lines.items():
+        n = len(m)
+        c = sum(1 for h in m.values() if h > 0)
+        total += n
+        covered += c
+        files.append({"file": path, "lines": n, "covered": c,
+                      "pct": round(c * 100 / n, 1) if n else 0.0})
+    files.sort(key=lambda f: (f["pct"], -f["lines"]))
+    return {"lines": lines, "files": files, "statements": total,
+            "statements_covered": covered,
+            "total_pct": round(covered * 100 / total, 1) if total else 0.0}
+
+
 def lcov(cov: dict) -> str:
     """{file:{line:hits}} → LCOV (what VS Code's Test Coverage API, Codecov and SonarQube read)."""
     out = []
