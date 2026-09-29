@@ -3,7 +3,6 @@ import sqlite3
 
 from web import store
 
-
 # Sentinels must be long and distinctive: base64 ciphertext can contain a short needle like "pw"
 # purely by chance, which made an earlier version of this test fail about 1 run in 8.
 JIRA_SENTINEL = "jira-token-sentinel-7f3ab91c"
