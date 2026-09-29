@@ -56,9 +56,13 @@ def setup_logging() -> None:
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
 
-def log(name: str, msg: str, **fields) -> None:
-    """One structured line, tagged with the active run."""
-    logging.getLogger(name).info(msg, extra={"extra_fields": fields})
+def log(logger_name: str, msg: str, /, **fields) -> None:
+    """One structured line, tagged with the active run.
+
+    The first two parameters are POSITIONAL-ONLY so an arbitrary structured field (`name=`, `msg=`…)
+    can never collide with them — callers pass domain data freely.
+    """
+    logging.getLogger(logger_name).info(msg, extra={"extra_fields": fields})
 
 
 # ---------------------------------------------------------------- LLM cost

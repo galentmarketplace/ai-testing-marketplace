@@ -661,9 +661,12 @@
     <div class="cardx"><div class="b" style="padding:36px">
       <h2 style="font-family:var(--font-mono); font-size:23px; margin:0 0 10px">AI Testing Marketplace</h2>
       <p style="color:var(--muted); font-size:14px; line-height:1.65; margin:0 0 24px">
-        Sign in with GitHub to run agentic tests against <b>your own repositories</b> — pick a source repo,
-        generate & run suites, and publish them back as pull requests.</p>
-      <a href="/auth/github/login" class="gh-login">
+        Sign in to run agentic tests against <b>your own repositories</b> — pick a source repo,
+        generate &amp; run suites, and publish them back as pull requests.</p>
+      <a href="/auth/oidc/login" class="gh-login" id="ssoLogin" style="display:none;margin-bottom:10px">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <span id="ssoLabel">Single sign-on</span></a>
+      <a href="/auth/github/login" class="gh-login" id="ghLogin">
         <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
         Continue with GitHub</a>
     </div></div>
@@ -951,6 +954,14 @@
         <div id="tokenNew" style="display:none" class="cfg-provides"></div>
         <div id="tokenList" class="fhelp">Loading…</div>
         <div style="margin-top:10px"><button class="ghost" id="tokenCreate" type="button">＋ Create token</button></div>
+      </div>
+    </div>
+
+    <div class="cardx" id="auditCard" style="margin-top:22px">
+      <div class="h">Audit trail <span class="tag">who did what, and when</span></div>
+      <div class="b">
+        <p class="fhelp" style="margin:0 0 10px">Every sign-in, Configuration change, run start or cancel, token action and artifact read. Admins see all tenants; everyone else sees their own.</p>
+        <div id="auditList" class="fhelp">Loading…</div>
       </div>
     </div>
 </section>
@@ -1312,6 +1323,11 @@ function stepNode(d){
   log(d.node,`<b>${escapeHtml(d.label)}</b> — ${escapeHtml(ids.map(i=>nodes[i]?._status.textContent).filter(Boolean).join(' · ')||'…')}`);
 }
 
+// ---- Sign-in methods this deployment offers (SSO appears only when an IdP is configured) ----
+fetch('/api/auth/methods').then(r=>r.json()).then(m=>{
+  if(m.sso && $('ssoLogin')){ $('ssoLogin').style.display=''; $('ssoLabel').textContent = m.sso_name || 'Single sign-on'; }
+  if(!m.github && $('ghLogin')) $('ghLogin').style.display='none';
+}).catch(()=>{});
 // ---- Auth: every /api call needs a principal. On 401 the session is gone → show the sign-in view. ----
 (function(){
   const _fetch = window.fetch.bind(window);
@@ -2008,6 +2024,29 @@ let PROJECTS=[], EDITING=null;
 const PF = ['name','jira_url','jira_email','jira_token','app_url','login_url','login_user','login_password','source_repo','dest_repo','jenkins_url','jenkins_job','jenkins_token'];
 const SECRETS = ['jira_token','login_password','jenkins_token'];
 
+// ---- Audit trail (Configuration view) ----
+const AUDIT_ICON={ 'login':'→','logout':'←','login.failed':'⚠','run.start':'▶','run.cancel':'■',
+  'config.create':'＋','config.update':'✎','config.delete':'✕','token.create':'＋','token.revoke':'✕','artifact.read':'👁' };
+function loadAudit(){
+  const box=$('auditList'); if(!box) return;
+  fetch('/api/audit?limit=60').then(r=>r.json()).then(d=>{
+    const es=d.entries||[];
+    if(!es.length){ box.textContent='No activity recorded yet.'; return; }
+    box.innerHTML = `<div style="max-height:320px;overflow:auto">` + es.map(e=>{
+      const bad = e.outcome && e.outcome!=='ok';
+      const det = Object.entries(e.detail||{}).filter(([,v])=>v!==null&&v!==undefined&&v!=='')
+                    .map(([k,v])=>`${k}=${String(v).slice(0,40)}`).join(' · ');
+      return `<div style="display:flex;gap:10px;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--border)">
+        <span style="width:14px;text-align:center;color:${bad?'var(--fail)':'var(--muted)'}">${AUDIT_ICON[e.action]||'·'}</span>
+        <b style="min-width:112px">${escapeHtml(e.action)}</b>
+        <span class="mono" style="min-width:120px;color:var(--muted)">${escapeHtml(e.actor||'')}</span>
+        <span class="mono" style="color:var(--muted);flex:1;word-break:break-all">${escapeHtml(e.target||'')}${det?' · '+escapeHtml(det):''}</span>
+        <span style="color:var(--muted);white-space:nowrap">${fmtWhen(e.ts)}</span>
+        ${bad?`<span class="chip crit">${escapeHtml(e.outcome)}</span>`:''}
+      </div>`;
+    }).join('') + `</div>`;
+  }).catch(()=>{ box.textContent='Could not load the audit trail.'; });
+}
 // ---- API tokens (Configuration view) ----
 function fmtWhen(t){ return t ? new Date(t*1000).toLocaleString() : 'never'; }
 function loadTokens(){
@@ -2033,6 +2072,7 @@ if($('tokenCreate')) $('tokenCreate').addEventListener('click', async ()=>{
   const nb=$('tokenNew'); nb.style.display='flex';
   nb.innerHTML = `<span class="lead">Copy now — shown once:</span><code class="mono" style="user-select:all;word-break:break-all">${escapeHtml(d.token)}</code>`;
   loadTokens();
+  loadAudit();
 });
 function loadProjects(){
   loadTokens(); fetch('/api/projects').then(r=>r.json()).then(d=>{ PROJECTS=d.projects||[]; renderProjectList(); }).catch(()=>{}); }

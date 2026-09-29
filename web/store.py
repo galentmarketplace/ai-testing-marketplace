@@ -111,7 +111,8 @@ def init_db() -> None:
     with _conn() as c:
         c.executescript("""
         CREATE TABLE IF NOT EXISTS sessions(
-            sid TEXT PRIMARY KEY, token TEXT, login TEXT, avatar TEXT, created_at REAL);
+            sid TEXT PRIMARY KEY, token TEXT, login TEXT, avatar TEXT, created_at REAL,
+            idp TEXT, name TEXT);
         CREATE TABLE IF NOT EXISTS runs(
             id TEXT PRIMARY KEY, login TEXT, flow TEXT, mode TEXT, tracks TEXT,
             inputs TEXT, story TEXT, status TEXT, created_at REAL, updated_at REAL, result TEXT);
@@ -122,10 +123,50 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS projects(
             id TEXT PRIMARY KEY, login TEXT, name TEXT, config TEXT, created_at REAL, updated_at REAL);
         CREATE INDEX IF NOT EXISTS idx_projects_login ON projects(login);
+        CREATE TABLE IF NOT EXISTS audit_log(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, actor TEXT, via TEXT, action TEXT,
+            target TEXT, outcome TEXT, ip TEXT, detail TEXT);
+        CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts DESC);
+        CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor, ts DESC);
         CREATE TABLE IF NOT EXISTS api_tokens(
             id TEXT PRIMARY KEY, login TEXT, name TEXT, token_hash TEXT UNIQUE,
             created_at REAL, last_used_at REAL);
         """)
+
+
+# ---------- Audit log (who did what, to what, when) ----------
+def audit(actor: str | None, via: str | None, action: str, target: str = "",
+          outcome: str = "ok", ip: str = "", detail: dict | None = None) -> None:
+    """Append-only record of every security-relevant action. Never raises: an audit failure must not
+    break the request, but it is logged so the gap is visible."""
+    try:
+        with _write_lock, _conn() as c:
+            c.execute("INSERT INTO audit_log(ts,actor,via,action,target,outcome,ip,detail) "
+                      "VALUES(?,?,?,?,?,?,?,?)",
+                      (time.time(), actor or "anonymous", via or "-", action, target, outcome, ip,
+                       json.dumps(detail or {}, default=str)))
+    except Exception as exc:                           # pragma: no cover - defensive
+        import logging
+        logging.getLogger("atm.audit").warning("audit write failed: %s", exc)
+
+
+def list_audit(actor: str | None = None, limit: int = 200, admin: bool = False) -> list[dict]:
+    """Recent audit entries — the caller's own unless they are an admin."""
+    with _conn() as c:
+        if admin:
+            rows = c.execute("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,))
+        else:
+            rows = c.execute("SELECT * FROM audit_log WHERE actor=? ORDER BY id DESC LIMIT ?",
+                             (actor or "", limit))
+        out = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["detail"] = json.loads(d["detail"]) if d.get("detail") else {}
+            except Exception:
+                d["detail"] = {}
+            out.append(d)
+        return out
 
 
 # ---------- API tokens (bearer auth for the VS Code extension / MCP server / CI) ----------
@@ -246,10 +287,21 @@ def mark_interrupted() -> int:
 
 
 # ---------- sessions ----------
-def save_session(sid: str, token: str, login: str, avatar: str) -> None:
+def save_session(sid: str, token: str, login: str, avatar: str,
+                 idp: str = "github", name: str = "") -> None:
     with _write_lock, _conn() as c:
-        c.execute("INSERT OR REPLACE INTO sessions(sid,token,login,avatar,created_at) VALUES(?,?,?,?,?)",
-                  (sid, encrypt(token), login, avatar, time.time()))   # OAuth token encrypted at rest
+        _migrate_sessions(c)
+        c.execute("INSERT OR REPLACE INTO sessions(sid,token,login,avatar,created_at,idp,name) "
+                  "VALUES(?,?,?,?,?,?,?)",
+                  (sid, encrypt(token), login, avatar, time.time(), idp, name or login))
+
+
+def _migrate_sessions(c) -> None:
+    """Add idp/name to a sessions table created before SSO existed (no migration tool yet)."""
+    cols = {r["name"] for r in c.execute("PRAGMA table_info(sessions)")}
+    for col in ("idp", "name"):
+        if col not in cols:
+            c.execute(f"ALTER TABLE sessions ADD COLUMN {col} TEXT")
 
 
 def delete_session(sid: str) -> None:
@@ -259,6 +311,7 @@ def delete_session(sid: str) -> None:
 
 def all_sessions() -> list[dict]:
     with _conn() as c:
+        _migrate_sessions(c)
         rows = [dict(r) for r in c.execute("SELECT * FROM sessions")]
     for r in rows:
         r["token"] = decrypt(r.get("token") or "")   # legacy plaintext rows pass through unchanged

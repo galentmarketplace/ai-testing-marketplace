@@ -56,6 +56,14 @@ reuse an existing prefix or add a stage.
   (don't reveal another tenant's ids). Legacy owner-less rows are admin-only.
 * Anything leaving the process (store, SSE, logs) passes through `_redact`. Session OAuth tokens and
   project secrets are Fernet-encrypted at rest.
+* **Sign-in:** GitHub OAuth and/or OIDC SSO (`/auth/oidc/login`); the ID token's signature, issuer,
+  audience and nonce are all verified against the provider's JWKS before a session is created.
+  `GET /api/auth/methods` tells the UI which are configured.
+* **Audit:** every security-relevant action calls `_audit(request, principal, action, target, …)` —
+  sign-in/out (including failures), run start/cancel, Configuration create/update/delete, token
+  create/revoke, artifact reads. Entries are append-only (`audit_log`), owner-scoped on read
+  (`GET /api/audit`, admins see all), and mirrored as structured `atm.audit` log lines. An audit write
+  failure is logged but never breaks the request.
 
 ## 7. Code standards
 * Python: **ruff** (lint + format, `ruff.toml`, line length 120); type hints on public functions;

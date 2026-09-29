@@ -32,7 +32,7 @@ from src import observability, runctx, sandbox
 from src.config import GENERATED_DIR
 from src.graph import build_graph
 from src.integration import github as gh
-from src.integration import jira
+from src.integration import jira, oidc
 from src.main import DEFAULT_STORY
 from src.orchestrator import orchestrate
 from src.registry import build_manifest
@@ -79,7 +79,8 @@ def _principal(request: Request) -> dict | None:
     """Who is calling: {login, via, admin, token?}. Session cookie first, then `Authorization: Bearer`."""
     sess = _session(request)
     if sess and sess.get("login"):
-        return {"login": sess["login"], "via": "session", "admin": sess["login"] in ADMINS, "token": sess.get("token")}
+        return {"login": sess["login"], "via": "session", "admin": sess["login"] in ADMINS,
+                "token": sess.get("token"), "idp": sess.get("idp", "github")}
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
         presented = auth[7:].strip()
@@ -89,6 +90,19 @@ def _principal(request: Request) -> dict | None:
         if row:
             return {"login": row["login"], "via": "token", "admin": row["login"] in ADMINS, "token": None}
     return None
+
+
+def _ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for", "")
+    return (fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "")) or "-"
+
+
+def _audit(request: Request, principal: dict | None, action: str, target: str = "",
+           outcome: str = "ok", **detail) -> None:
+    store.audit(principal["login"] if principal else None, principal["via"] if principal else None,
+                action, target, outcome, _ip(request), detail or None)
+    observability.log("atm.audit", action, actor=(principal or {}).get("login", "anonymous"),
+                      target=target, outcome=outcome, **detail)
 
 
 def require_auth(request: Request) -> dict:
@@ -136,16 +150,61 @@ def gh_callback(request: Request, code: str = "", state: str = ""):
     me = gh.whoami()
     sid = secrets.token_urlsafe(24)
     SESSIONS[sid] = {"token": token, "login": me.get("login"), "avatar": me.get("avatar")}
-    store.save_session(sid, token, me.get("login"), me.get("avatar"))   # survive restarts
+    store.save_session(sid, token, me.get("login"), me.get("avatar"), idp="github", name=me.get("login"))
+    _audit(request, {"login": me.get("login"), "via": "session"}, "login", "github", "ok", idp="github")
     resp = RedirectResponse("/")
     resp.set_cookie("sid", sid, httponly=True, max_age=86400, samesite="lax",
                     secure=PUBLIC_URL.startswith("https"))   # Secure whenever we're served over TLS
     return resp
 
 
+# ---------- OIDC single sign-on (enterprise IdP: Auth0 / Okta / Entra / Google Workspace) ----------
+OIDC_STATES: dict[str, str] = {}      # state -> nonce
+
+
+@app.get("/auth/oidc/login")
+def oidc_login(request: Request):
+    if not oidc.configured():
+        raise HTTPException(400, "SSO is not configured (set ATM_OIDC_ISSUER / _CLIENT_ID / _CLIENT_SECRET)")
+    state, nonce = secrets.token_urlsafe(16), secrets.token_urlsafe(16)
+    OIDC_STATES[state] = nonce
+    base = (PUBLIC_URL or str(request.base_url)).rstrip("/")
+    return RedirectResponse(oidc.authorize_url(base + "/auth/oidc/callback", state, nonce))
+
+
+@app.get("/auth/oidc/callback")
+def oidc_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+    if error:
+        _audit(request, None, "login.failed", "oidc", "denied", error=error)
+        raise HTTPException(400, f"SSO error: {error}")
+    nonce = OIDC_STATES.pop(state, None)
+    if nonce is None:
+        _audit(request, None, "login.failed", "oidc", "denied", error="invalid state")
+        raise HTTPException(400, "invalid SSO state")
+    base = (PUBLIC_URL or str(request.base_url)).rstrip("/")
+    try:
+        tok = oidc.exchange_code(code, base + "/auth/oidc/callback")
+        claims = oidc.verify_id_token(tok["id_token"], nonce)     # signature + issuer + audience + nonce
+    except Exception as exc:
+        _audit(request, None, "login.failed", "oidc", "denied", error=str(exc)[:200])
+        raise HTTPException(400, f"SSO token verification failed: {exc}")
+    who = oidc.principal_from_claims(claims)
+    sid = secrets.token_urlsafe(24)
+    SESSIONS[sid] = {"token": None, "login": who["login"], "avatar": who["avatar"],
+                     "idp": "oidc", "name": who["name"]}
+    store.save_session(sid, "", who["login"], who["avatar"], idp="oidc", name=who["name"])
+    _audit(request, {"login": who["login"], "via": "session"}, "login", "oidc", "ok", idp="oidc")
+    resp = RedirectResponse("/")
+    resp.set_cookie("sid", sid, httponly=True, max_age=86400, samesite="lax",
+                    secure=PUBLIC_URL.startswith("https"))
+    return resp
+
+
 @app.get("/auth/logout")
 def gh_logout(request: Request):
     sid = request.cookies.get("sid", "")
+    sess = SESSIONS.get(sid)
+    _audit(request, {"login": (sess or {}).get("login"), "via": "session"} if sess else None, "logout")
     SESSIONS.pop(sid, None)
     store.delete_session(sid)
     resp = RedirectResponse("/")
@@ -328,6 +387,8 @@ def run(req: RunRequest, request: Request, principal: dict = Depends(require_aut
 
     run_id = uuid.uuid4().hex
     flow = (req.story or {}).get("title") or req.mode
+    _audit(request, principal, "run.start", run_id, mode=req.mode, mock=req.mock,
+           project_id=req.project_id, ticket=req.ticket)
     store.create_run(run_id, login, flow, req.mode, req.tracks, _redact(req.inputs), _redact(req.story))
     threading.Thread(target=_execute_run, args=(run_id, req, token), daemon=True).start()
     return {"run_id": run_id, "status": "running"}
@@ -382,17 +443,19 @@ def project_get(project_id: str, principal: dict = Depends(require_auth)):
 
 
 @app.post("/api/projects")
-def project_save(req: ProjectReq, principal: dict = Depends(require_auth)):
+def project_save(req: ProjectReq, request: Request, principal: dict = Depends(require_auth)):
     if req.id:
         _assert_owner_project(req.id, principal)
     pid = store.save_project(principal["login"], req.name, req.config, req.id)
+    _audit(request, principal, "config.update" if req.id else "config.create", pid, name=req.name)
     return {"id": pid, **(store.get_project(pid) or {})}
 
 
 @app.delete("/api/projects/{project_id}")
-def project_delete(project_id: str, principal: dict = Depends(require_auth)):
+def project_delete(project_id: str, request: Request, principal: dict = Depends(require_auth)):
     _assert_owner_project(project_id, principal)
     store.delete_project(project_id)
+    _audit(request, principal, "config.delete", project_id)
     return {"ok": True}
 
 
@@ -477,13 +540,14 @@ def _fold_run(run_id: str) -> dict:
 
 
 @app.post("/api/runs/{run_id}/cancel")
-def run_cancel(run_id: str, principal: dict = Depends(require_auth)):
+def run_cancel(run_id: str, request: Request, principal: dict = Depends(require_auth)):
     """Ask a running run to stop. The orchestrator checks between steps, so the run ends at the next
     boundary with status `cancelled` (already-finished runs are returned unchanged)."""
     r = _assert_owner_run(run_id, principal)
     if r.get("status") in store.TERMINAL:
         return {"ok": True, "status": r["status"], "note": "run already finished"}
     store.request_cancel(run_id)
+    _audit(request, principal, "run.cancel", run_id)
     return {"ok": True, "status": "cancelling"}
 
 
@@ -495,7 +559,7 @@ def run_summary(run_id: str, principal: dict = Depends(require_auth)):
 
 
 @app.get("/api/artifact")
-def artifact(path: str, principal: dict = Depends(require_auth)):
+def artifact(path: str, request: Request, principal: dict = Depends(require_auth)):
     """Return the content of a generated artifact file (sandboxed to generated/)."""
     target = Path(path).resolve()
     gen_root = GENERATED_DIR.resolve()
@@ -509,6 +573,7 @@ def artifact(path: str, principal: dict = Depends(require_auth)):
         _assert_owner_run(owner_run, principal)
     elif not principal["admin"]:
         raise HTTPException(404, "not found")      # legacy shared-directory artifacts: admin only
+    _audit(request, principal, "artifact.read", str(target).split("generated/")[-1], run=owner_run or "-")
     return {"path": str(target), "content": target.read_text()}
 
 
@@ -523,12 +588,13 @@ class TokenReq(BaseModel):
 
 
 @app.post("/api/tokens")
-def token_create(req: TokenReq, principal: dict = Depends(require_auth)):
+def token_create(req: TokenReq, request: Request, principal: dict = Depends(require_auth)):
     """Mint a bearer API token for the signed-in user (browser session only — a token can't mint tokens).
     The plaintext is returned exactly once."""
     if principal["via"] != "session":
         raise HTTPException(403, "API tokens can only be created from a signed-in browser session")
     tid, plain = store.create_api_token(principal["login"], req.name)
+    _audit(request, principal, "token.create", tid, name=req.name)
     return {"id": tid, "name": req.name, "token": plain}
 
 
@@ -538,10 +604,24 @@ def token_list(principal: dict = Depends(require_auth)):
 
 
 @app.delete("/api/tokens/{token_id}")
-def token_delete(token_id: str, principal: dict = Depends(require_auth)):
+def token_delete(token_id: str, request: Request, principal: dict = Depends(require_auth)):
     if not store.delete_api_token(principal["login"], token_id):
         raise HTTPException(404, "token not found")
+    _audit(request, principal, "token.revoke", token_id)
     return {"ok": True}
+
+
+@app.get("/api/audit")
+def audit_list(limit: int = 200, request: Request = None, principal: dict = Depends(require_auth)):
+    """Audit trail: your own actions, or everyone's if you are an admin."""
+    return {"entries": store.list_audit(principal["login"], min(limit, 1000), admin=principal["admin"])}
+
+
+@app.get("/api/auth/methods")
+def auth_methods():
+    """Which sign-in methods this deployment offers (drives the login screen)."""
+    return {"github": gh.oauth_configured(), "sso": oidc.configured(),
+            "sso_name": os.environ.get("ATM_OIDC_NAME", "Single sign-on")}
 
 
 @app.get("/api/default-story")
