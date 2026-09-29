@@ -3,7 +3,9 @@ import os
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-GENERATED_DIR = PROJECT_ROOT / "generated"
+# ATM_GENERATED_DIR relocates agent artifacts (deployments mount a volume; tests use a tmpdir so
+# a test run never writes into the working tree).
+GENERATED_DIR = Path(os.environ.get("ATM_GENERATED_DIR") or (PROJECT_ROOT / "generated"))
 
 MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "3"))
 
