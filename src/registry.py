@@ -24,6 +24,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from .agents.ac_agent import generate_ac
+from .agents.deploy_agent import deploy_app
 from .agents.dev_agent import generate_code
 from .agents.functional_case_agent import generate_functional_cases
 from .agents.go_coverage_agent import coverage_gate, go_coverage
@@ -122,6 +123,14 @@ REGISTRY: list[AgentSpec] = [
         display=[DisplayNode("dev", "Dev Agent", "🛠️", _C["tool"], "BUILD", "agent", column="dev")],
     ),
     AgentSpec(
+        # Boots the build so the automation drives the REAL feature, not a stale environment.
+        # Skips itself when the run produced no code (the configured base_url is already live).
+        id="deploy_app", label="Deploy", kind="runner", fn=deploy_app,
+        tracks=("build", "deploy"), depends_on=("generate_code",), category="Build",
+        produces="build the app and boot it on an ephemeral URL the tests then target",
+        display=[DisplayNode("deploy", "Deploy", "🚀", _C["exec"], "DEPLOY", "runner", column="deploy")],
+    ),
+    AgentSpec(
         id="run_unit_tests", label="Unit Tests", kind="runner", fn=run_unit_tests,
         tracks=("unit",), depends_on=("generate_code",), produces="run the unit suite",
         display=[DisplayNode("unit_run", "Unit Tests", "🧪", _C["exec"], "UNIT", "runner", column="unit_run")],
@@ -160,7 +169,7 @@ REGISTRY: list[AgentSpec] = [
     ),
     AgentSpec(
         id="generate_ui_scripts", label="Playwright Agent", kind="agent", fn=generate_ui_scripts,
-        tracks=("functional",), depends_on=("generate_functional_cases",),
+        tracks=("functional",), depends_on=("generate_functional_cases", "deploy_app"),
         produces="automate each functional case as a Playwright spec (grounded in the real DOM)",
         display=[DisplayNode("ui", "Playwright Agent", "🎭", _C["tool"], "TOOL USE", "agent", column="ui")],
     ),

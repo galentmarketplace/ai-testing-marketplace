@@ -103,6 +103,7 @@ class PipelineState(TypedDict, total=False):
     functional_cases: list[dict]   # Functional Test Case agent output (derived from the AC / Jira)
     functional_artifacts: list[dict]  # the functional-test-cases document(s)
     code_artifacts: list[dict]     # [CodeArtifact]
+    deployment: dict               # {ok,url,strategy,port,log} — the booted app under test
     test_artifacts: list[dict]     # [TestArtifact]
     run_results: list[dict]        # [RunResult] (append-only history)
     gate_decisions: list[dict]     # [GateDecision] (append-only history)
@@ -111,3 +112,18 @@ class PipelineState(TypedDict, total=False):
     attempts: dict                 # {"generate_code": 1, "generate_ui_scripts": 2, ...}
     pr: dict                       # {"url": ..., "summary": ...}
     status: str                    # running | blocked | done | failed
+
+
+def target_url(state: dict, default: str = "http://localhost:3000") -> str:
+    """The URL the tests must drive.
+
+    A build this run deployed always wins over the statically configured `base_url`:
+    otherwise the automation would verify the previously deployed environment and report
+    green for a feature that was never exercised. Falls back to the configured URL when
+    nothing was deployed (a test-only run against an existing environment).
+    """
+    dep = state.get("deployment") or {}
+    if dep.get("ok") and dep.get("url"):
+        return str(dep["url"]).rstrip("/")
+    inp = (state.get("story", {}) or {}).get("inputs", {}) or {}
+    return str(inp.get("base_url") or default).rstrip("/")

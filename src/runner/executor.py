@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .. import runctx, sandbox
 from ..config import PROJECT_ROOT
-from ..state import Failure, PerfMetrics, PipelineState, RunResult
+from ..state import Failure, PerfMetrics, PipelineState, RunResult, target_url
 
 
 def _sim_pods(state: PipelineState | None):
@@ -172,7 +172,7 @@ def _run_real(suite: str, state: PipelineState) -> RunResult:
                     shutil.copyfile(fx, spec.parent / "fixtures.ts")
                 except Exception:
                     pass
-            app_url = inp.get("base_url") or os.environ.get("APP_URL", "http://localhost:3000")
+            app_url = target_url(state, os.environ.get("APP_URL", "http://localhost:3000"))
             proc = subprocess.run(["npx", "playwright", "test", spec.name, "--reporter=json"],
                                   capture_output=True, text=True, timeout=1200, cwd=str(runner),
                                   env=sandbox.child_env({

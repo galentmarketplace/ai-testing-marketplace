@@ -23,7 +23,7 @@ from pathlib import Path
 from .. import runctx, sandbox
 from ..config import PROJECT_ROOT
 from ..llm import call_llm_json
-from ..state import PipelineState, TestArtifact
+from ..state import PipelineState, TestArtifact, target_url
 
 SYSTEM = """You are a senior test-automation engineer. Write a COMPLETE Playwright (TypeScript) spec
 that AUTOMATES EXACTLY THE REQUESTED FLOW end-to-end against a real running app.
@@ -134,7 +134,7 @@ def generate_ui_scripts(state: PipelineState) -> dict:
     attempts = dict(state.get("attempts", {}))
     attempts["generate_ui_scripts"] = attempts.get("generate_ui_scripts", 0) + 1
 
-    base = (inp.get("base_url") or "http://localhost:3000").rstrip("/")
+    base = target_url(state)   # a build deployed by THIS run beats the configured base_url
     routes = analysis.get("ui_routes", [])
 
     # Login is CONFIGURED PER REPO (not app-specific). Fall back to env for the bundled demo only.

@@ -31,8 +31,8 @@ from pydantic import BaseModel
 from src import observability, runctx, sandbox
 from src.config import GENERATED_DIR
 from src.graph import build_graph
+from src.integration import deployer, jira, oidc
 from src.integration import github as gh
-from src.integration import jira, oidc
 from src.main import DEFAULT_STORY
 from src.orchestrator import orchestrate
 from src.registry import build_manifest
@@ -348,6 +348,12 @@ def _execute_run(run_id: str, req: RunRequest, github_token: str | None):
     except Exception as exc:  # persist the error so a reconnecting client sees it
         store.append_event(run_id, seq, "error", {"message": str(exc)})
         store.finish_run(run_id, "error", {"message": str(exc)})
+    finally:
+        # Never leave an app the run booted still listening — including when the run crashed,
+        # was cancelled, or hit its deadline.
+        torn = deployer.teardown_run(run_id)
+        if torn:
+            observability.log("atm.run", "tore down run deployments", deployments=torn)
 
 
 @app.post("/api/run")
