@@ -108,7 +108,8 @@ def _run_real(suite: str, state: PipelineState) -> RunResult:
     def _num(metric: dict, key: str) -> float:
         return float(metric.get(key, metric.get("values", {}).get(key, 0)) or 0)
 
-    passed, failed, perf, failures = 0, 0, None, []
+    passed, failed, skipped, perf, failures = 0, 0, 0, None, []
+    cases: list[dict] = []
 
     # ---- perf: run any generated k6 script against the live API (auto-login for a fresh token) ----
     k6art = next((a for a in reversed(arts) if a.get("type") == "k6"), None)  # newest wins on self-heal
@@ -189,9 +190,19 @@ def _run_real(suite: str, state: PipelineState) -> RunResult:
                 stats = report.get("stats", {})
                 passed += stats.get("expected", 0)
                 failed += stats.get("unexpected", 0)
+                # Playwright reports skips separately. Dropping them hides un-verified cases
+                # behind a 100% pass rate.
+                skipped += stats.get("skipped", 0)
 
                 def _walk(suite):  # pull the real error + failure-context so the agent heals from evidence
                     for sp in suite.get("specs", []):
+                        # Record EVERY case with its real title. Synthesising "case #1" for
+                        # passes makes a green CI report untraceable to an acceptance case.
+                        for t in sp.get("tests", []):
+                            st = (t.get("status") or "").lower()
+                            status = ("skipped" if st in ("skipped", "expected-skipped")
+                                      else "passed" if sp.get("ok") else "failed")
+                            cases.append({"name": sp.get("title", "e2e"), "status": status})
                         for t in sp.get("tests", []):
                             for res in t.get("results", []):
                                 errs = [(e.get("message") or "").strip() for e in res.get("errors", [])]
@@ -206,13 +217,26 @@ def _run_real(suite: str, state: PipelineState) -> RunResult:
                         _walk(s)
                 for s in report.get("suites", []):
                     _walk(s)
-            except Exception:
-                passed += 1 if proc.returncode == 0 else 0
-                failed += 0 if proc.returncode == 0 else 1
+            except Exception as exc:
+                # An unreadable report is missing evidence, not evidence of success. Trusting
+                # the exit code here turned a parse failure into a green run.
+                failed += 1
+                failures.append(Failure(
+                    test=f"{suite} report",
+                    error=(f"could not parse the Playwright JSON report ({exc}). "
+                           f"Exit code was {proc.returncode}. Treating this as a failure "
+                           "because nothing verified the run.")))
 
     if not k6art and not pwart:
         return _blocked(f"no runnable artifact generated for suite '{suite}'")
-    return RunResult(run_id=rid, suite=suite, passed=passed or 1, failed=failed, perf=perf, failures=failures)
+    # `passed or 1` used to sit here. When nothing was measured it reported ONE passing test,
+    # which the gate read as a 100% pass rate — a green verdict manufactured from no evidence.
+    # No measurement is a blocked run, never a pass.
+    if passed == 0 and failed == 0 and skipped == 0:
+        return _blocked(f"the {suite} runner produced no measurable result — "
+                        "no test was reported as passed, failed or skipped")
+    return RunResult(run_id=rid, suite=suite, passed=passed, failed=failed,
+                     skipped=skipped, perf=perf, failures=failures, cases=cases)
 
 
 def _auto_login(api_base: str) -> str:

@@ -53,13 +53,26 @@ class RunResult(BaseModel):
     suite: str  # unit | feature | perf | regression
     passed: int
     failed: int
+    skipped: int = 0          # a skipped case was NOT verified; see skip_rate below
+    cases: list[dict] = []    # [{name, status}] — real titles, so CI shows WHICH case passed
     failures: list[Failure] = []
     perf: PerfMetrics | None = None
 
     @property
     def pass_rate(self) -> float:
+        """Share of EXECUTED tests that passed — the conventional meaning."""
         total = self.passed + self.failed
         return 1.0 if total == 0 else self.passed / total
+
+    @property
+    def skip_rate(self) -> float:
+        """Share of all cases that were never run.
+
+        Reported separately because a suite that skips its hard cases and passes the easy
+        ones reaches a 100% pass rate while verifying very little. "Not tested" must never
+        be presented as "passed"."""
+        total = self.passed + self.failed + self.skipped
+        return 0.0 if total == 0 else self.skipped / total
 
 
 class GateDecision(BaseModel):

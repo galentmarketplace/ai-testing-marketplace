@@ -232,7 +232,10 @@ def generate_ui_scripts(state: PipelineState) -> dict:
     prompt = "\n".join(context)
     for tryn in range(3):
         try:
-            raw = call_llm_json("ui_automation_agent", SYSTEM, prompt, max_tokens=6000)
+            # A spec covering a dozen acceptance cases runs well past 6000 output tokens; the
+            # reply was truncated mid-file and the JSON parse then failed three times over.
+            raw = call_llm_json("ui_automation_agent", SYSTEM, prompt,
+                                max_tokens=int(os.environ.get("ATM_UI_MAX_TOKENS", "24000")))
             files = [f for f in (raw.get("files") or []) if f.get("content", "").strip()]
         except Exception as exc:
             print(f"  [Playwright Agent] generation attempt {tryn + 1} errored: {exc}")

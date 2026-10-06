@@ -42,8 +42,18 @@ def _mock_response(agent_name: str) -> str:
     return MOCK_RESPONSES[agent_name]
 
 
+class TruncatedResponse(RuntimeError):
+    """The model stopped because it ran out of output budget, so the reply is incomplete."""
+
+
 def _provider() -> str:
     return os.environ.get("LLM_PROVIDER", "anthropic").lower()
+
+
+# Above this output budget the SDK refuses a non-streaming request outright ("Streaming is
+# required for operations that may take longer than 10 minutes"), so a large budget must
+# stream. Agents that write whole spec files need those budgets.
+_STREAM_ABOVE = 8192
 
 
 def _call_anthropic(system: str, user: str, max_tokens: int) -> str:
@@ -52,14 +62,26 @@ def _call_anthropic(system: str, user: str, max_tokens: int) -> str:
     kwargs = dict(model=os.environ.get("CLAUDE_MODEL", "claude-sonnet-5"),
                   max_tokens=max_tokens, system=system,
                   messages=[{"role": "user", "content": user}])
-    resp = client.messages.create(**kwargs)   # newer models reject temperature — omit it
+    if max_tokens > _STREAM_ABOVE:
+        with client.messages.stream(**kwargs) as stream:
+            resp = stream.get_final_message()
+    else:
+        resp = client.messages.create(**kwargs)   # newer models reject temperature — omit it
     u = getattr(resp, "usage", None)          # per-run token + cost accounting
     if u is not None:
         observability.record_usage(_AGENT.get() or "llm", kwargs["model"],
                                    int(getattr(u, "input_tokens", 0) or 0),
                                    int(getattr(u, "output_tokens", 0) or 0))
     # concatenate any text blocks (skip tool/thinking blocks)
-    return "".join(getattr(b, "text", "") for b in resp.content) or resp.content[0].text
+    text = "".join(getattr(b, "text", "") for b in resp.content) or resp.content[0].text
+    # A response cut off at the token ceiling is a HALF-WRITTEN document, not a bad one.
+    # Reporting it as "empty output" sends the caller looking for the wrong problem, and a
+    # retry at the same budget fails identically. Say what actually happened.
+    if getattr(resp, "stop_reason", None) == "max_tokens":
+        raise TruncatedResponse(
+            f"the model hit the {max_tokens}-token output ceiling and the reply is "
+            f"incomplete ({len(text)} chars). Raise max_tokens or narrow the request.")
+    return text
 
 
 def _call_openai_compatible(provider: str, system: str, user: str, max_tokens: int) -> str:
@@ -128,4 +150,10 @@ def call_llm_json(agent_name: str, system: str, user: str, max_tokens: int = 400
     start, end = text.find("{"), text.rfind("}")
     if start == -1 or end == -1:
         raise ValueError(f"[{agent_name}] No JSON object in LLM response:\n{text[:500]}")
-    return json.loads(text[start:end + 1])
+    try:
+        return json.loads(text[start:end + 1])
+    except json.JSONDecodeError as exc:
+        # An unterminated document almost always means the reply was cut off mid-write.
+        hint = (" — the response looks cut off, so the output budget is probably too small"
+                if not text.rstrip().endswith("}") else "")
+        raise ValueError(f"[{agent_name}] malformed JSON from the model{hint}: {exc}") from exc

@@ -56,3 +56,83 @@ def test_redact_scrubs_secrets_at_every_depth():
     assert out["config"]["jira"]["token"] == "***" and out["config"]["jira"]["ticket"] == "QA-1"
     assert out["inputs"]["login_password"] == "***" and out["inputs"]["base_url"] == "http://app"
     assert out["list"][0]["github_token"] == "***"
+
+
+# ---- skipped cases must be visible, never silently folded into a 100% pass ----
+def _qg1(passed, failed, skipped, **policy_over):
+    from src.config import GATE_POLICY
+    from src.gates.quality_gates import quality_gate_1
+    saved = dict(GATE_POLICY["QG1"])
+    GATE_POLICY["QG1"].update(policy_over)
+    try:
+        st = {"run_results": [{"run_id": "r", "suite": "feature", "passed": passed,
+                               "failed": failed, "skipped": skipped, "failures": []}]}
+        return quality_gate_1(st)["gate_decisions"][-1]
+    finally:
+        GATE_POLICY["QG1"].clear()
+        GATE_POLICY["QG1"].update(saved)
+
+
+def test_skipped_cases_appear_as_their_own_criterion():
+    d = _qg1(5, 0, 4)
+    labels = " | ".join(c["label"] for c in d["checks"])
+    assert "4 of 9 case(s) not executed" in labels
+    assert "44%" in labels
+
+
+def test_a_high_skip_rate_is_advisory_by_default_so_it_does_not_block():
+    d = _qg1(5, 0, 4)
+    assert d["verdict"] == "pass"
+    skip_check = next(c for c in d["checks"] if "not executed" in c["label"])
+    assert skip_check["ok"] is False and skip_check["advisory"] is True
+
+
+def test_skips_can_be_made_blocking_by_policy():
+    d = _qg1(5, 0, 4, skip_blocking=True)
+    assert d["verdict"] == "fail", "with skip_blocking the unverified cases must stop the run"
+
+
+def test_no_skips_adds_no_extra_criterion():
+    d = _qg1(5, 0, 0)
+    assert not any("not executed" in c["label"] for c in d["checks"])
+
+
+def test_the_pass_rate_label_shows_the_real_counts():
+    d = _qg1(5, 1, 2)
+    assert "5 passed, 1 failed, 2 skipped" in d["checks"][0]["label"]
+
+
+def test_skip_rate_is_computed_over_all_cases_not_just_executed():
+    from src.state import RunResult
+    r = RunResult(run_id="r", suite="feature", passed=5, failed=0, skipped=4)
+    assert r.pass_rate == 1.0        # conventional: of those executed
+    assert round(r.skip_rate, 3) == 0.444
+
+
+# ---- the runner must never invent a passing test from no measurement ----
+def test_a_run_with_nothing_measured_is_blocked_not_passed():
+    """`passed or 1` used to report ONE pass when nothing ran, which the gate read as
+    a 100% pass rate: a green verdict manufactured from no evidence."""
+    from pathlib import Path
+
+    from src.state import RunResult
+    # Comments explaining the old bug mention it by name, so inspect CODE lines only.
+    code = "\n".join(ln for ln in Path("src/runner/executor.py").read_text().splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "passed=passed or 1" not in code, "the fabricated-pass fallback is back"
+    assert "passed=passed," in code
+    assert "produced no measurable result" in code
+
+    # and the gate must fail such a result rather than pass it
+    blocked = RunResult(run_id="r", suite="feature", passed=0, failed=1,
+                        failures=[{"test": "feature runner", "error": "no measurable result"}])
+    assert blocked.pass_rate == 0.0
+
+
+def test_an_unparseable_report_counts_as_a_failure_not_a_pass():
+    from pathlib import Path
+    code = "\n".join(ln for ln in Path("src/runner/executor.py").read_text().splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "could not parse the Playwright JSON report" in code
+    assert "passed += 1 if proc.returncode == 0 else 0" not in code, \
+        "the exit code is being trusted over actual evidence again"

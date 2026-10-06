@@ -12,27 +12,77 @@ import time
 from collections import defaultdict
 from xml.sax.saxutils import escape, quoteattr
 
-
 # ----------------------------------------------------------------------------- JUnit XML
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def xml_safe(text: str) -> str:
+    """Strip what XML 1.0 cannot represent.
+
+    Playwright colours its failure messages with ANSI escapes, and a raw 0x1b is an illegal
+    XML character that `escape()` does not remove. The resulting file fails to parse, so
+    Jenkins and GitHub ingest nothing — and a red run then shows up as "no tests ran".
+    """
+    return _CTRL.sub("", _ANSI.sub("", text or ""))
+
+
 def junit_xml(result: dict, name: str | None = None) -> str:
-    """RunResult dict → JUnit XML. Passed cases are synthesised (the runner reports counts), failed
-    ones carry the real test title + error so CI shows exactly what broke."""
+    """RunResult dict → JUnit XML.
+
+    When the runner captured real case titles they are used verbatim, so a green report in
+    Jenkins still says WHICH acceptance case passed. Only a runner that reports bare counts
+    falls back to synthesised names.
+    """
     suite = name or result.get("suite", "suite")
     passed, failed = int(result.get("passed", 0)), int(result.get("failed", 0))
+    skipped = int(result.get("skipped", 0))
     fails = list(result.get("failures") or [])
+    cases = list(result.get("cases") or [])
+    if cases:
+        err_by = {(f.get("test") or ""): (f.get("error") or "failed") for f in fails}
+        total = len(cases)
+        nfail = sum(1 for c in cases if c.get("status") == "failed")
+        nskip = sum(1 for c in cases if c.get("status") == "skipped")
+        out = ['<?xml version="1.0" encoding="UTF-8"?>',
+               f'<testsuites name={quoteattr(suite)} tests="{total}" failures="{nfail}">',
+               f'  <testsuite name={quoteattr(suite)} tests="{total}" failures="{nfail}" '
+               f'errors="0" skipped="{nskip}" '
+               f'timestamp={quoteattr(time.strftime("%Y-%m-%dT%H:%M:%S"))}>']
+        for c in cases:
+            nm, st = xml_safe(c.get("name") or suite), c.get("status")
+            out.append(f'    <testcase classname={quoteattr(suite)} name={quoteattr(nm)}'
+                       + ('>' if st in ("failed", "skipped") else '/>'))
+            if st == "skipped":
+                out.append('      <skipped/>')
+                out.append('    </testcase>')
+            elif st == "failed":
+                err = xml_safe(err_by.get(nm, "failed"))
+                out.append(f'      <failure message={quoteattr(err.splitlines()[0][:200])}>'
+                           f'{escape(err)}</failure>')
+                out.append('    </testcase>')
+        out += ['  </testsuite>', '</testsuites>', '']
+        return "\n".join(out)
+    # Fallback: a runner that reports only counts. Skips are still declared, so a CI
+    # dashboard cannot read "not run" as "passed".
+    total = passed + failed + skipped
     out = ['<?xml version="1.0" encoding="UTF-8"?>',
-           f'<testsuites name={quoteattr(suite)} tests="{passed + failed}" failures="{failed}">',
-           f'  <testsuite name={quoteattr(suite)} tests="{passed + failed}" failures="{failed}" '
-           f'errors="0" skipped="0" timestamp={quoteattr(time.strftime("%Y-%m-%dT%H:%M:%S"))}>']
+           f'<testsuites name={quoteattr(suite)} tests="{total}" failures="{failed}">',
+           f'  <testsuite name={quoteattr(suite)} tests="{total}" failures="{failed}" '
+           f'errors="0" skipped="{skipped}" '
+           f'timestamp={quoteattr(time.strftime("%Y-%m-%dT%H:%M:%S"))}>']
     for i in range(passed):
         out.append(f'    <testcase classname={quoteattr(suite)} name={quoteattr(f"{suite} case #{i + 1}")}/>')
     for i in range(failed):
         f = fails[i] if i < len(fails) else {}
-        title = f.get("test") or f"{suite} failure #{i + 1}"
-        err = (f.get("error") or "failed")
+        title = xml_safe(f.get("test") or f"{suite} failure #{i + 1}")
+        err = xml_safe(f.get("error") or "failed")
         out.append(f'    <testcase classname={quoteattr(suite)} name={quoteattr(title)}>')
         out.append(f'      <failure message={quoteattr(err.splitlines()[0][:200])}>{escape(err)}</failure>')
         out.append('    </testcase>')
+    for i in range(skipped):
+        out.append(f'    <testcase classname={quoteattr(suite)} '
+                   f'name={quoteattr(f"{suite} skipped #{i + 1}")}><skipped/></testcase>')
     out += ['  </testsuite>', '</testsuites>', '']
     return "\n".join(out)
 

@@ -21,10 +21,25 @@ def _decide(state: PipelineState, gate: str, suite: str, route_on_fail: str) -> 
     # Every criterion is recorded (actual vs threshold, pass/fail) so the results UI can show
     # exactly what each gate verified — not just "all criteria met".
     checks = [{
-        "label": f"pass rate {result.pass_rate:.0%}",
+        "label": f"pass rate {result.pass_rate:.0%}"
+                 + (f"  ({result.passed} passed, {result.failed} failed"
+                    + (f", {result.skipped} skipped" if result.skipped else "") + ")"),
         "threshold": f"≥ {policy['min_pass_rate']:.0%}",
         "ok": result.pass_rate >= policy["min_pass_rate"],
     }]
+    # Skipped cases are surfaced as their own criterion. Advisory by default, because a skip
+    # is sometimes the honest choice (a case needing a pre-provisioned account, say) — but it
+    # must be VISIBLE, since a pass rate alone cannot distinguish "verified" from "not run".
+    if result.skipped:
+        limit = policy.get("max_skip_rate", 0.25)
+        checks.append({
+            "label": f"{result.skipped} of "
+                     f"{result.passed + result.failed + result.skipped} case(s) not executed "
+                     f"({result.skip_rate:.0%})",
+            "threshold": f"≤ {limit:.0%} skipped",
+            "ok": result.skip_rate <= limit,
+            "advisory": not policy.get("skip_blocking", False),
+        })
     if result.perf and "max_p95_ms" in policy:
         p95, lim = result.perf.p95_ms, policy["max_p95_ms"]
         checks.append({
