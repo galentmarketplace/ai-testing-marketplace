@@ -464,7 +464,7 @@ def run(req: RunRequest, request: Request, principal: dict = Depends(require_aut
         inp = dict(req.inputs or {})
         _MAP = {"base_url": "app_url", "login_url": "login_url", "login_user": "login_user",
                 "login_password": "login_password", "source_repo": "source_repo", "dest_repo": "dest_repo",
-                "jenkins_ui_job": "jenkins_job"}
+                "jenkins_ui_job": "jenkins_job", "test_accounts": "test_accounts"}
         for ikey, pkey in _MAP.items():
             if not inp.get(ikey) and p.get(pkey):
                 inp[ikey] = p[pkey]

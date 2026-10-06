@@ -173,6 +173,32 @@ def lint_spec(content: str) -> list[str]:
     return problems
 
 
+
+def _test_accounts(inp: dict) -> list[dict]:
+    """Accounts the environment provides, each labelled with the state it represents.
+
+    Accepts a list of dicts, or a compact "user:purpose, user:purpose" string so it can be
+    typed into a config field. The primary login is excluded — it is already described above.
+    """
+    raw = inp.get("test_accounts")
+    out: list[dict] = []
+    if isinstance(raw, list):
+        for a in raw:
+            if isinstance(a, dict) and a.get("username"):
+                out.append({"username": str(a["username"]),
+                            "purpose": str(a.get("purpose") or a.get("role") or "")})
+    elif isinstance(raw, str) and raw.strip():
+        for part in raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            user, _, purpose = part.partition(":")
+            if user.strip():
+                out.append({"username": user.strip(), "purpose": purpose.strip()})
+    primary = (inp.get("login_user") or "").strip()
+    return [a for a in out if a["username"] != primary]
+
+
 def generate_ui_scripts(state: PipelineState) -> dict:
     inp = state.get("story", {}).get("inputs", {}) or {}
     analysis = state.get("repo_analysis") or {}
@@ -194,6 +220,16 @@ def generate_ui_scripts(state: PipelineState) -> dict:
                  f"on {login_route} (derived from the app's routes).{guard_note}" if user_email else
                  "This app appears to need NO login (no credentials configured) — do not add a login step "
                  "unless the DOM clearly shows a login form.")
+
+    # Additional accounts, each with the state it represents. Without these the agent cannot
+    # verify a case like "a locked account shows the lockout message": it either skips it or,
+    # worse, writes a test that can never pass, and the gate then loops until it blocks.
+    accounts = _test_accounts(inp)
+    if accounts:
+        lines = [f"  - {a['username']} ({a.get('purpose') or 'additional account'})" for a in accounts]
+        auth_note += ("\n\nTEST ACCOUNTS AVAILABLE (all use process.env.LOGIN_PASSWORD unless noted). "
+                      "Use the one whose state the case needs — do NOT skip a case that one of these "
+                      "makes testable:\n" + "\n".join(lines))
 
     cases = state.get("functional_cases") or []
     if cases:

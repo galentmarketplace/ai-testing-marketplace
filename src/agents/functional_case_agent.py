@@ -11,6 +11,7 @@ grounded in the real DOM — so nothing is invented; every spec traces back to a
 import json
 
 from .. import sandbox
+from ..agents.ui_automation_agent import _test_accounts as _ui_accounts
 from ..llm import call_llm_json
 from ..mocks import MOCK_RESPONSES
 from ..state import PipelineState
@@ -37,11 +38,14 @@ Rules:
 - Each case must be concrete and independently executable, with ordered UI steps.
 - Trace every case back to the AC id(s) it verifies (covers_ac).
 - For each case set "automatable": true only if it can be automated end-to-end against the LIVE app
-  with the ONE provided test account and no external setup. Set it false when the case needs special
-  test data (e.g. a separately-provisioned locked/expired account), an external condition you cannot
-  induce (service outage, network failure, rate-limit lockout), or manual/visual verification — and
-  put the reason in "automation_note". Be honest: a case that can't be driven with the given account
-  is NOT automatable.
+  with the TEST ACCOUNTS LISTED BELOW and no external setup. Set it false when the case needs test
+  data none of those accounts provides, an external condition you cannot induce (service outage,
+  network failure, waiting out a real timeout), or manual/visual verification — and put the reason
+  in "automation_note".
+  Read the account list before deciding. If an account exists for the state a case needs — a
+  pre-locked account, an admin, a read-only user — the case IS automatable, and marking it false
+  because "only one account was provided" is wrong: that case then gets skipped downstream and the
+  criterion goes unverified. Be honest in both directions.
 
 Respond with ONLY a JSON object:
 {"cases": [{"id": "FC-1", "title": "...", "priority": "must|should|could",
@@ -59,6 +63,13 @@ def _md(cases: list[dict], repo: str) -> str:
         lines += [f"  {i + 1}. {s}" for i, s in enumerate(c.get("steps", []) or [])]
         lines += [f"- **Expected:** {c.get('expected_result', '—')}", ""]
     return "\n".join(lines)
+
+
+
+def _accounts(raw, primary: str) -> list[dict]:
+    """Parse the configured extra accounts, reusing the Playwright agent's parser so the two
+    agents can never disagree about which accounts exist."""
+    return _ui_accounts({"test_accounts": raw, "login_user": primary})
 
 
 def generate_functional_cases(state: PipelineState) -> dict:
@@ -79,6 +90,17 @@ def generate_functional_cases(state: PipelineState) -> dict:
                    "page. It does NOT redirect already-logged-in users away from the login page — do not "
                    "write cases that assume behaviours the code does not implement.")
     ctx.append(f"App stack: {analysis.get('stack', 'web app')}")
+
+    primary = (inp.get("login_user") or "").strip()
+    extra = _accounts(inp.get("test_accounts"), primary)
+    if primary or extra:
+        lines = ([f"  - {primary} (the primary account — valid, unrestricted)"] if primary else [])
+        lines += [f"  - {a['username']} ({a['purpose'] or 'additional account'})" for a in extra]
+        ctx.append("TEST ACCOUNTS AVAILABLE on this environment — judge \"automatable\" against ALL "
+                   "of these, not just the primary one:\n" + "\n".join(lines))
+    else:
+        ctx.append("TEST ACCOUNTS: only one unrestricted account is available; a case needing a "
+                   "different account state is not automatable here.")
 
     raw = call_llm_json("functional_case_agent", SYSTEM, "\n\n".join(ctx), max_tokens=5000)
     cases = [c for c in (raw.get("cases") or []) if c.get("title")]

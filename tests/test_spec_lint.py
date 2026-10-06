@@ -115,3 +115,44 @@ def test_the_mock_spec_satisfies_the_lint():
     assert files
     for f in files:
         assert lint_spec(f["content"]) == [], f"the mock spec violates the lint: {f['path']}"
+
+
+# ---- test accounts: the upstream reason cases were skipped ----
+def test_extra_accounts_are_parsed_from_a_compact_string():
+    from src.agents.ui_automation_agent import _test_accounts
+    got = _test_accounts({"login_user": "standard_user",
+                          "test_accounts": "locked_out_user:a pre-locked account, problem_user:UI defects"})
+    assert got == [{"username": "locked_out_user", "purpose": "a pre-locked account"},
+                   {"username": "problem_user", "purpose": "UI defects"}]
+
+
+def test_the_primary_account_is_not_listed_twice():
+    from src.agents.ui_automation_agent import _test_accounts
+    got = _test_accounts({"login_user": "standard_user",
+                          "test_accounts": "standard_user:primary, locked_out_user:locked"})
+    assert [a["username"] for a in got] == ["locked_out_user"]
+
+
+def test_a_list_of_dicts_is_accepted_too():
+    from src.agents.ui_automation_agent import _test_accounts
+    got = _test_accounts({"test_accounts": [{"username": "admin", "role": "administrator"},
+                                            {"username": "ro", "purpose": "read only"},
+                                            {"nope": "no username"}]})
+    assert got == [{"username": "admin", "purpose": "administrator"},
+                   {"username": "ro", "purpose": "read only"}]
+
+
+def test_no_accounts_configured_is_not_an_error():
+    from src.agents.ui_automation_agent import _test_accounts
+    assert _test_accounts({}) == []
+    assert _test_accounts({"test_accounts": ""}) == []
+
+
+def test_both_agents_share_one_parser():
+    """If the two agents disagreed about which accounts exist, the case agent would mark a
+    case un-automatable while the spec agent had the account to drive it."""
+    from src.agents.functional_case_agent import _accounts
+    from src.agents.ui_automation_agent import _test_accounts
+    raw = "locked_out_user:locked"
+    assert _accounts(raw, "standard_user") == _test_accounts(
+        {"test_accounts": raw, "login_user": "standard_user"})
