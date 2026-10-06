@@ -5,13 +5,33 @@ figures are measured, not estimated.
 
 **Total: about 15 minutes.**
 
-## Read this before you plan the demo
+## Reliability: a live run is now safe to show
 
-A live run is **not reliable enough to stake the demo on.** Measured across nine runs of the
-same ticket:
+Three root causes made earlier runs block, all fixed, all measured on the same ticket:
+
+| Cause | Fix |
+|---|---|
+| Agents wrote specs importing page objects that cannot resolve, then navigated to a bare `/` | Specs are validated before execution and rejected with their faults fed back |
+| Agents were told only one test account existed, so cases needing a locked account were skipped or made unpassable | Projects declare the accounts that exist; `locked_out_user` makes the lockout case a real test |
+| Output-token ceilings truncated replies into invalid JSON mid-run | Every agent's budget raised, with a test enforcing a floor |
+
+**Since those fixes: 6 runs, 6 passed.**
 
 | | |
 |---|---|
+| Duration | 111 to 363 seconds |
+| Attempts before passing | 1 to 4 |
+| Cost | $0.17 to $0.57 |
+| Skipped cases | 1 to 2 of 10-13, each with a stated reason |
+
+So **run it live.** Budget up to 6 minutes and keep narrating; the gate loop is the
+interesting part, not a hang. Still open the completed run in a second tab, because a
+network blip or a SauceDemo hiccup is outside our control.
+
+Do not weaken the gate threshold to make a demo pass. That is the one change that would
+undermine everything the demo is about.
+
+---|---|
 | Passed | 5 of 9 |
 | Blocked | 4 of 9 (two were bugs since fixed, so call it 2 in 7 today) |
 | Duration | 111s to 529s |
@@ -76,17 +96,9 @@ mechanisms rather than assert them.
 Open **SCRUM-5** in Jira. Show the Acceptance Criteria section. Say: this is the only input.
 Not a prompt, not a description of the app. The ticket.
 
-### 3. The run, 2 minutes
+### 3. The live run, 2 to 6 minutes
 
-Open the verified completed run and walk its execution view. This one is clean: one attempt,
-8 executed, 0 failed, 2 skipped, 17 assertions.
-
-```bash
-# the rehearsed, verified run
-echo http://127.0.0.1:8090  # open it, then Runs -> e2fd1b5e
-```
-
-Optionally start a live one in parallel at the very start of the demo, and come back to it:
+Start it from the dashboard, or:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8090/api/run \
@@ -158,7 +170,7 @@ Then make the ask: **two pilot teams.** Everything else is work we can complete 
 | Run blocks or a gate fails | **Do not debug.** Say "this is the self-correction loop, and it blocks rather than reporting a false pass" — that is a true and favourable statement. Switch to the completed run in your second tab |
 | Dashboard unreachable | The tunnel or the platform stopped. Use `http://127.0.0.1:8090` locally and carry on |
 | Jenkins down | `docker start marketplace-jenkins`, allow 60 seconds |
-| Run takes longer than 3 minutes | Expected — a run can take up to 9 minutes if the gate loops. Keep narrating, or switch to the completed run |
+| Run takes longer than 3 minutes | Expected — measured 111 to 363 seconds. The gate loop is the interesting part; narrate it |
 | Live run blocks | Say it accurately: "it refused to pass at 94% against a 95% policy, and blocked instead of reporting a false pass." Then continue with the completed run |
 
 ---
