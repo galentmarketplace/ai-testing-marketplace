@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Bring the AI Testing Marketplace up on a bare Ubuntu/Debian VPS, end to end.
+# Bring the AI Testing Marketplace up on a bare Linux host, end to end.
+# Tested shape: Ubuntu/Debian, and Amazon Linux 2023 (EC2 or Lightsail).
 #
 #   scp deploy/vps-bootstrap.sh you@your-vps:~ && ssh you@your-vps 'bash ~/vps-bootstrap.sh'
 #
@@ -28,13 +29,48 @@ fi
 log "host has ${MEM_MB} MB RAM — enough"
 
 # ---------------------------------------------------------------- docker
+ID_LIKE=$(. /etc/os-release 2>/dev/null; echo "${ID} ${ID_LIKE}")
 if ! command -v docker >/dev/null 2>&1; then
   log "installing Docker"
-  curl -fsSL https://get.docker.com | sudo sh
+  case "$ID_LIKE" in
+    *amzn*|*rhel*|*fedora*)
+      # get.docker.com does not support Amazon Linux; its own packages are the supported path.
+      sudo dnf install -y docker
+      sudo systemctl enable --now docker
+      ;;
+    *)
+      curl -fsSL https://get.docker.com | sudo sh
+      ;;
+  esac
   sudo usermod -aG docker "$USER"
   NEED_RELOGIN=1
 fi
-docker compose version >/dev/null 2>&1 || die "docker compose v2 is required"
+command -v docker >/dev/null 2>&1 || die "Docker did not install"
+sudo systemctl is-active --quiet docker 2>/dev/null || sudo systemctl start docker 2>/dev/null || true
+
+if ! docker compose version >/dev/null 2>&1; then
+  # Amazon Linux's docker package ships without the compose plugin.
+  log "installing the docker compose plugin"
+  ARCH=$(uname -m); case "$ARCH" in aarch64) CA=aarch64 ;; x86_64) CA=x86_64 ;; *) die "unsupported arch $ARCH" ;; esac
+  sudo mkdir -p /usr/local/lib/docker/cli-plugins
+  sudo curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose \
+    "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-${CA}"
+  sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+fi
+docker compose version >/dev/null 2>&1 || die "docker compose v2 is required and could not be installed"
+
+# ---------------------------------------------------------------- prerequisites
+# A minimal AWS image has neither; the script needs git to clone and python3 to generate
+# the encryption key.
+for tool in git python3; do
+  command -v "$tool" >/dev/null 2>&1 && continue
+  log "installing $tool"
+  case "$ID_LIKE" in
+    *amzn*|*rhel*|*fedora*) sudo dnf install -y "$tool" ;;
+    *) sudo apt-get update -qq && sudo apt-get install -y -qq "$tool" ;;
+  esac
+  command -v "$tool" >/dev/null 2>&1 || die "could not install $tool"
+done
 
 # ---------------------------------------------------------------- source
 if [ -d "$DIR/.git" ]; then
