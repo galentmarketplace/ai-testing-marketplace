@@ -133,9 +133,12 @@ is what makes a generated pull request safe rather than merely present.
 
 ### 6. Cost, 1 minute
 
-**About $0.17 to $0.30 per run.** Measurement, execution and reporting are deterministic code;
-the model is spent only where judgement is genuinely required. So cost does not scale with how
-much testing you do.
+**$0.17 for a clean run, up to $0.80 when the gate loops** — measured across nine runs. Quote
+the range, not the best case; someone will ask what happens when it retries.
+
+Measurement, execution and reporting are deterministic code, and the model is spent only where
+judgement is genuinely required. Coverage, for instance, costs nothing at all. So cost tracks
+how much *reasoning* a change needs, not how much testing you do.
 
 ### 7. Close, 2 minutes
 
