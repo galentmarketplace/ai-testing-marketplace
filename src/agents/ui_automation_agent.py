@@ -17,6 +17,7 @@ trace-fed healing, API-based setup) still to be layered on.
 """
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -71,8 +72,17 @@ ORACLES — assertions come from the requirement, not your imagination:
 - Prefer asserting a specific, user-visible outcome (getByRole/getByText for the expected result) over generic
   visibility of a container.
 - Read BASE_URL from process.env.BASE_URL. Group tests in a descriptive test.describe.
-- IMPORTS: start the spec with `import { test, expect } from './fixtures';` (NOT '@playwright/test').
-  The fixtures capture console/network and the page's accessibility snapshot on failure — do not redefine them.
+- IMPORTS: the spec runs STANDALONE from its own directory, which contains ONLY the spec and
+  `fixtures.ts`. So the ONLY permitted import is `import { test, expect } from './fixtures';`
+  (NOT '@playwright/test'). The fixtures capture console/network and the page's accessibility
+  snapshot on failure — do not redefine them.
+  NEVER import a page object, helper or config from a relative path such as '../pages/LoginPage'
+  or '../../pages/...'. Those files do not exist next to the spec, so the import cannot resolve.
+  The spec must be SELF-CONTAINED: write the locators inline.
+- NAVIGATION: every page.goto() MUST use an ABSOLUTE url built from BASE_URL, e.g.
+  `await page.goto(`${BASE_URL}/`)`. There is no Playwright `baseURL` configured for a
+  standalone spec, so a relative `page.goto('/')` fails with
+  "Protocol error (Page.navigate): Cannot navigate to invalid URL" on every single test.
 - If PRIOR RUN FAILURES are given, fix the EXACT locator/assertion that failed — do not rewrite unrelated
   parts. When a failure includes a "PAGE STATE AT FAILURE" accessibility snapshot, build the corrected
   locator from THAT real state (it is the page as it actually was when the step broke); the console/network
@@ -126,6 +136,41 @@ def _format_dom(snap: dict) -> str:
         rows.append("  ACCESSIBILITY TREE (roles + accessible names — build getByRole(name) directly from these):")
         rows.extend("    " + ln for ln in snap["aria"].splitlines()[:60])
     return "\n".join(rows)
+
+
+
+_BAD_IMPORT = re.compile(r"""^\s*import\s[^'"]*['"]((?!\./fixtures)[^'"]+)['"]""", re.M)
+_REL_GOTO = re.compile(r"""\.goto\(\s*(?:['"`]/|\)|['"`]\s*\))""")
+# An assertion that cannot fail is worse than no assertion: it looks like verification and
+# is not. Seen live — `await expect(...).toBeVisible().catch(() => {})`.
+_DEAD_ASSERT = re.compile(r"expect\([^;]*?\)\s*\.catch\(|expect\.soft\(|"
+                          r"expect\([^;]*?\)\s*\.(?:then|finally)\(")
+
+
+def lint_spec(content: str) -> list[str]:
+    """Reject the two faults that make a standalone spec fail on EVERY test.
+
+    Found the hard way: a generated spec imported `../../pages/LoginPage` (which does not
+    exist beside the spec) and called `loginPage.goto()`, which navigates to a bare "/" with
+    no configured baseURL. Playwright then failed all nine tests with "Cannot navigate to
+    invalid URL", the gate looped, and the run blocked after burning four attempts. A prompt
+    rule alone is not enough — the model can ignore it, so this is checked.
+    """
+    problems = []
+    for m in _BAD_IMPORT.finditer(content):
+        problems.append(f"imports {m.group(1)!r}, which does not exist beside the spec — "
+                        "the only permitted import is './fixtures'; inline the locators instead")
+    if _REL_GOTO.search(content):
+        problems.append("navigates with a relative or empty goto() — a standalone spec has no "
+                        "configured baseURL, so every goto must be absolute: "
+                        "page.goto(`${BASE_URL}/...`)")
+    if "process.env.BASE_URL" not in content:
+        problems.append("never reads process.env.BASE_URL, so it cannot target the configured app")
+    for m in _DEAD_ASSERT.finditer(content):
+        problems.append(f"contains an assertion that cannot fail ({m.group(0)[:40]!r}) — remove the "
+                        ".catch()/soft so the assertion actually verifies something; an assertion "
+                        "that can never fail is a false pass")
+    return problems
 
 
 def generate_ui_scripts(state: PipelineState) -> dict:
@@ -240,6 +285,18 @@ def generate_ui_scripts(state: PipelineState) -> dict:
         except Exception as exc:
             print(f"  [Playwright Agent] generation attempt {tryn + 1} errored: {exc}")
             files = []
+        # Reject a spec that cannot possibly run before it costs a full execution + gate cycle.
+        lint: list[str] = []
+        for f in files:
+            lint += lint_spec(f.get("content", ""))
+        if files and lint:
+            for problem in lint[:4]:
+                print(f"  [Playwright Agent] rejected: {problem}")
+            prompt = ("\n".join(context) + "\n\nYour previous spec was REJECTED before running, "
+                      "because it could not execute at all:\n- " + "\n- ".join(lint[:6]) +
+                      "\n\nReturn a corrected, SELF-CONTAINED spec that fixes exactly these.")
+            files = []
+            continue
         if files:
             break
         prompt = ("\n".join(context) +
