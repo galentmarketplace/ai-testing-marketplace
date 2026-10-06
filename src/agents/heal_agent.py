@@ -21,6 +21,7 @@ it does not report a repair. A previous version appended "repaired N cases" with
 anything, which made the run history lie.
 """
 import json
+import os
 from pathlib import Path
 
 from .. import runctx
@@ -175,7 +176,7 @@ def heal_regression(state: PipelineState) -> dict:
             f"Acceptance criteria:\n{json.dumps(ac)[:3000]}\n\n"
             f"Triaged test defects to fix:\n{findings}\n\n"
             f"Current spec ({spec_path.name}):\n{current[:14000]}",
-            max_tokens=8000)
+            max_tokens=int(os.environ.get("ATM_HEAL_MAX_TOKENS", "24000")))   # a whole repaired spec
         content = (fix.get("content") or "").strip()
     except Exception as exc:
         print(f"  [Self-Heal] repair call failed ({exc}) — spec left unchanged")

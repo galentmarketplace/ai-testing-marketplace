@@ -12,6 +12,7 @@ restore a faithful assertion or mark the case test.fixme (product mismatch), nev
 
 This is what "oracle-gated" means: a heal is accepted only if the test still verifies the AC.
 """
+import os
 import re
 from pathlib import Path
 
@@ -62,7 +63,9 @@ def oracle_check(state: PipelineState) -> dict:
         "a URL/element unrelated to the expected outcome), or the test can pass without the expected result "
         "being true. Skipped/fixme cases are declared gaps — do NOT flag them.")
     try:
-        raw = call_llm_json("oracle_agent", SYSTEM, prompt, max_tokens=1500)
+        # One verdict per case with its evidence; 1500 truncates once a ticket yields a dozen cases.
+        raw = call_llm_json("oracle_agent", SYSTEM, prompt,
+                            max_tokens=int(os.environ.get("ATM_ORACLE_MAX_TOKENS", "8000")))
         # EVIDENCE GROUNDING (anti-hallucination): keep a finding only if (a) its case id is real and (b) its quoted
         # evidence actually appears in the spec. An LLM may only re-label evidence a real artifact contains —
         # it never invents a finding. Ungrounded findings are dropped and counted, never silently trusted.

@@ -8,6 +8,7 @@ artifacts but marked unverified — never presented as green. Generated files ne
 working tree: they go to generated/coverage/tests/ (and only into OUR clone for verification).
 """
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -78,7 +79,8 @@ def generate_go_tests(state: PipelineState) -> dict:
         src = _func_source(root, u["file"], u.get("line")) if root and root.exists() else ""
         ctx.append(f"\n--- {u['file']}:{u.get('line')}  func {u['func']} ---\n{src or '(source unavailable — skip unless signature is obvious)'}")
     try:
-        raw = call_llm_json("go_test_agent", SYSTEM, "\n".join(ctx), max_tokens=4000)
+        raw = call_llm_json("go_test_agent", SYSTEM, "\n".join(ctx),
+                            max_tokens=int(os.environ.get("ATM_GOTEST_MAX_TOKENS", "16000")))
     except Exception as exc:
         print(f"  [Go Test Gen] generation failed ({exc})")
         return {}

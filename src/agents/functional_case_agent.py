@@ -9,6 +9,7 @@ result, the AC ids it covers). The UI Automation agent then automates each case 
 grounded in the real DOM — so nothing is invented; every spec traces back to a requirement.
 """
 import json
+import os
 
 from .. import sandbox
 from ..agents.ui_automation_agent import _test_accounts as _ui_accounts
@@ -102,7 +103,10 @@ def generate_functional_cases(state: PipelineState) -> dict:
         ctx.append("TEST ACCOUNTS: only one unrestricted account is available; a case needing a "
                    "different account state is not automatable here.")
 
-    raw = call_llm_json("functional_case_agent", SYSTEM, "\n\n".join(ctx), max_tokens=5000)
+    # A dozen cases with ordered steps and expected results overran 5000 and truncated,
+    # which blocked the run before a single test was written.
+    raw = call_llm_json("functional_case_agent", SYSTEM, "\n\n".join(ctx),
+                        max_tokens=int(os.environ.get("ATM_CASES_MAX_TOKENS", "16000")))
     cases = [c for c in (raw.get("cases") or []) if c.get("title")]
     if not cases:
         raise RuntimeError("Functional Case agent produced no cases — the LLM returned empty "
