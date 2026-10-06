@@ -99,3 +99,19 @@ def test_a_catch_unrelated_to_an_assertion_is_not_flagged():
     spec = GOOD.replace("await page.goto(`${BASE_URL}/`);",
                         "await page.goto(`${BASE_URL}/`);\n    await page.unroute('**').catch(() => {});")
     assert not any("cannot fail" in p for p in lint_spec(spec))
+
+
+def test_the_mock_spec_satisfies_the_lint():
+    """The mock fixture must model what the real agent should produce.
+
+    It did not: it imported '@playwright/test' and navigated relatively, so adding the lint
+    broke the mock full-track CI check. A mock that cannot pass its own rules teaches the
+    wrong shape and hides prompt regressions instead of exercising them.
+    """
+    import json
+
+    from src.mocks import MOCK_RESPONSES
+    files = json.loads(MOCK_RESPONSES["ui_automation_agent"])["files"]
+    assert files
+    for f in files:
+        assert lint_spec(f["content"]) == [], f"the mock spec violates the lint: {f['path']}"
