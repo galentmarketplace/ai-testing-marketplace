@@ -127,7 +127,13 @@ def _call_openai_compatible(provider: str, system: str, user: str, max_tokens: i
             raise
 
 
-def call_llm(agent_name: str, system: str, user: str, max_tokens: int = 4000) -> str:
+# 4000 truncated the perf agent mid-script and blocked a run. Every agent here writes a
+# file, a script or a case list, so the floor is what a generated FILE needs, not a reply.
+DEFAULT_MAX_TOKENS = int(os.environ.get("ATM_DEFAULT_MAX_TOKENS", "16000"))
+
+
+def call_llm(agent_name: str, system: str, user: str,
+             max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
     """Return the raw text of the model response (routed to the configured provider)."""
     _AGENT.set(agent_name)
     if runctx.is_mock():
@@ -141,7 +147,8 @@ def call_llm(agent_name: str, system: str, user: str, max_tokens: int = 4000) ->
                      + ", ".join(_OPENAI_COMPAT))
 
 
-def call_llm_json(agent_name: str, system: str, user: str, max_tokens: int = 4000) -> dict:
+def call_llm_json(agent_name: str, system: str, user: str,
+                  max_tokens: int = DEFAULT_MAX_TOKENS) -> dict:
     """Call the LLM and parse a JSON object out of the response."""
     text = call_llm(agent_name, system, user, max_tokens=max_tokens)
     match = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)  # strip code fences

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-AGENTS = sorted(Path("src/agents").glob("*.py"))
+AGENTS = sorted(Path("src/agents").glob("*.py")) + sorted(Path("src/agents/plugins").glob("*.py"))
 # Below this, any agent that writes a spec, a case list or a set of verdicts will truncate.
 FLOOR = 8000
 
@@ -31,11 +31,22 @@ def test_no_agent_has_a_budget_that_truncates(path):
                      "reply is invalid JSON, so the agent crashes and the run blocks.")
 
 
-def test_the_generating_agents_are_actually_covered():
-    """Guard the guard: if these stopped declaring a budget the test above would pass vacuously."""
-    for name in ("ui_automation_agent", "functional_case_agent", "heal_agent", "oracle_agent"):
-        p = Path("src/agents") / f"{name}.py"
-        assert _budgets(p), f"{name} declares no max_tokens, so it silently uses the 4000 default"
+def test_the_shared_default_is_itself_above_the_floor():
+    """The hole that let the perf agent block a run: it declared NO budget, so the floor test
+    above had nothing to check and passed vacuously while 4000 truncated it mid-script."""
+    from src.llm import DEFAULT_MAX_TOKENS
+    assert DEFAULT_MAX_TOKENS >= FLOOR, (
+        f"agents that declare no max_tokens silently use {DEFAULT_MAX_TOKENS}")
+
+
+@pytest.mark.parametrize("path", AGENTS, ids=lambda p: p.stem)
+def test_every_llm_agent_is_covered(path):
+    """Either it declares a budget above the floor, or it inherits a default above it."""
+    from src.llm import DEFAULT_MAX_TOKENS
+    if "call_llm" not in path.read_text():
+        pytest.skip("not an LLM agent")
+    budgets = _budgets(path) or [DEFAULT_MAX_TOKENS]
+    assert min(budgets) >= FLOOR, f"{path.name} can be truncated at {min(budgets)}"
 
 
 def test_budgets_are_overridable_without_a_code_change():

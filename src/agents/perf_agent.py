@@ -21,7 +21,7 @@ from pathlib import Path
 from .. import runctx, sandbox
 from ..config import PROJECT_ROOT
 from ..llm import call_llm_json
-from ..state import PipelineState, TestArtifact
+from ..state import PipelineState, TestArtifact, target_url
 
 SYSTEM = """You are a senior performance engineer. Given the acceptance criteria and the target app's API
 base URL, generate a k6 (JavaScript) performance test for the app's most relevant REST endpoints
@@ -100,7 +100,15 @@ def _endpoints(analysis: dict) -> list[dict]:
             eps.append({"name": name, "path": p})
     # Prefer list/summary endpoints first; cap for a focused test.
     eps.sort(key=lambda e: 0 if (e["path"].endswith("/list") or e["path"].endswith("/summary")) else 1)
-    return eps[:6] or [{"name": "root", "path": "/"}]
+    if eps:
+        return eps[:6]
+    # No API surface. A static front end is still perfectly load-testable over its real
+    # routes, and testing those is honest; asking a model to invent /users and /orders
+    # produced a script that 404'd on every request and ran for 14 minutes.
+    routes = [r for r in (analysis.get("ui_routes") or []) if isinstance(r, str) and r.startswith("/")]
+    for p_ in routes[:6]:
+        eps.append({"name": re.sub(r"[^a-zA-Z0-9]+", "_", p_.strip("/")) or "root", "path": p_})
+    return eps or [{"name": "root", "path": "/"}]
 
 
 def _build_real_k6(analysis: dict, base_url: str, inp: dict) -> str:
@@ -201,8 +209,11 @@ def generate_perf_scripts(state: PipelineState) -> dict:
             print(f"  [Perf Agent] Core Web Vitals: {rep['passed']}/{rep['total']} within budget")
 
     # PROTOCOL dimension: k6. REAL path builds against the repo's analyzed endpoints.
-    if analysis and analysis.get("ok") and analysis.get("api"):
-        base = inp.get("base_url") or "http://localhost:8888"
+    if analysis and analysis.get("ok") and (analysis.get("api") or analysis.get("ui_routes")):
+        # A build this run deployed wins over the configured URL — otherwise the load test
+        # hammers whatever was configured earlier (or a localhost default) instead of the
+        # app that was just deployed.
+        base = target_url(state, inp.get("base_url") or "http://localhost:8888")
         test_type = _detect_type(inp)
         content = _build_real_k6(analysis, base, inp)
         out = sandbox.run_workspace("perf") / f"api-{test_type}.k6.js"

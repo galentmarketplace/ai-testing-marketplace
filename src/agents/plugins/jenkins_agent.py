@@ -288,7 +288,9 @@ def _heal_regression_branch(state: PipelineState) -> list[str]:
         ctx = (f"FAILING TEST: {f.get('test')}\nCI ERROR:\n{f.get('error')}\n\n"
                + "\n\n".join(f"=== FILE: {p} ===\n{c}" for p, c in files.items()))
         try:
-            raw = call_llm_json("regression_agent", _REG_SYSTEM, ctx, max_tokens=6000)
+            # repairs a whole regression spec; 6000 truncates it into invalid JSON
+            raw = call_llm_json("regression_agent", _REG_SYSTEM, ctx,
+                                max_tokens=int(os.environ.get("ATM_REGHEAL_MAX_TOKENS", "16000")))
             path = (raw.get("path") or "").strip()
             content = (raw.get("content") or "").strip()
         except Exception as exc:

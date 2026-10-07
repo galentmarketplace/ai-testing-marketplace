@@ -136,3 +136,16 @@ def test_an_unparseable_report_counts_as_a_failure_not_a_pass():
     assert "could not parse the Playwright JSON report" in code
     assert "passed += 1 if proc.returncode == 0 else 0" not in code, \
         "the exit code is being trusted over actual evidence again"
+
+
+# ---- k6 rate metrics: reading the wrong key reported 0% errors on a 100%-failed run ----
+def test_a_k6_rate_metric_is_read_from_whichever_shape_it_uses():
+    """k6's summary-export gives a Rate as {"value": 0..1, "passes": n, "fails": n} — there
+    is no "rate" key, so reading only "rate" returned 0 and a run where EVERY request was
+    refused was reported as a 0.0% error rate, which the gate then accepted."""
+    from pathlib import Path
+    code = Path("src/runner/executor.py").read_text()
+    assert "def _rate(" in code, "the rate helper is gone"
+    assert 'error_rate=round(_rate(' in code, "the error rate bypasses the helper again"
+    # and the helper must prefer value/rate over the counter fallback
+    assert '"rate", "value"' in code

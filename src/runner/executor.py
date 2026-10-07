@@ -108,6 +108,18 @@ def _run_real(suite: str, state: PipelineState) -> RunResult:
     def _num(metric: dict, key: str) -> float:
         return float(metric.get(key, metric.get("values", {}).get(key, 0)) or 0)
 
+    def _rate(metric: dict) -> float:
+        """A k6 Rate metric as a 0..1 fraction, whichever shape the export used."""
+        for key in ("rate", "value"):
+            for src in (metric, metric.get("values", {}) or {}):
+                if isinstance(src, dict) and src.get(key) is not None:
+                    return float(src[key])
+        passes, fails = metric.get("passes"), metric.get("fails")
+        if isinstance(passes, int | float) and isinstance(fails, int | float):
+            total = passes + fails
+            return float(passes) / total if total else 0.0
+        return 0.0
+
     passed, failed, skipped, perf, failures = 0, 0, 0, None, []
     cases: list[dict] = []
 
@@ -116,7 +128,13 @@ def _run_real(suite: str, state: PipelineState) -> RunResult:
     if k6art:
         if not shutil.which("k6"):
             return _blocked("k6 not installed (brew install k6)")
-        api_base = inp.get("base_url") or os.environ.get("BASE_URL", "http://localhost:8888")
+        # A build this run deployed wins over the configured URL — the same precedence the
+        # Playwright path uses. This branch was still reading inputs.base_url and falling back
+        # to localhost:8888, then PASSING that to k6 as BASE_URL, which overrode the correct
+        # URL the perf agent had baked into the script. Nothing listens on 8888, so every
+        # request was refused: 0ms duration, 100% errors, on a deployment that was healthy.
+        api_base = target_url(state, inp.get("base_url")
+                              or os.environ.get("BASE_URL", "http://localhost:8888"))
         token = _auto_login(api_base) or os.environ.get("TOKEN", "")
         out = sandbox.run_workspace("perf") / f"summary-{rid}.json"
 
@@ -152,7 +170,10 @@ def _run_real(suite: str, state: PipelineState) -> RunResult:
         perf = PerfMetrics(
             p95_ms=round(_num(m.get("http_req_duration", {}), "p(95)"), 1),
             p99_ms=round(_num(m.get("http_req_duration", {}), "p(99)"), 1) or None,
-            error_rate=round(_num(m.get("http_req_failed", {}), "rate"), 4),
+            # k6's summary-export gives a Rate metric as {"value": 0..1, "passes": n, "fails": n}
+            # — there is no "rate" key. Reading only "rate" returned 0, so a run where EVERY
+            # request failed was reported as a 0.0% error rate and the gate accepted it.
+            error_rate=round(_rate(m.get("http_req_failed", {})), 4),
             throughput_rps=round(_num(m.get("http_reqs", {}), "rate"), 1) or None,
             test_type=inp_pt, pod_resources=pod_resources)
         if cf:
