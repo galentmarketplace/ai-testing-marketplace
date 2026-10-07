@@ -657,6 +657,8 @@
   .rsum-label { font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); margin-bottom:9px; }
   .scope-chips { display:flex; flex-wrap:wrap; gap:6px; }
   .scope-chips span { font-size:11px; padding:3px 10px; border-radius:20px; border:1px solid var(--border); background:var(--panel2); }
+  /* a child agent/gate of the lane before it — same row, visibly subordinate */
+  .scope-chips span.sub { background:transparent; color:var(--muted); border-style:dashed; }
   details.adv { margin-top:18px; border-top:1px solid var(--border); padding-top:12px; }
   details.adv summary { cursor:pointer; font-size:12px; color:var(--muted); user-select:none; }
   details.adv[open] summary { margin-bottom:8px; }
@@ -1476,9 +1478,9 @@ const FLOWS=[
   {id:'unit', t:'Unit Tests', ic:'🧪', cc:'#8b5cf6', mode:'custom', tracks:['unit'], scope:'on an existing repo',
    p:'Run the Unit Test agent alone on a repo — execute the unit suite and gate on the results.',
    chips:['Unit Tests','UNIT Gate']},
-  {id:'coverage', t:'Go Code Coverage', ic:'📈', cc:'#39c5cf', mode:'custom', tracks:['coverage'], scope:'on an existing Go repo',
-   p:'Run the repo’s own Go tests with -coverprofile → total / per-file / per-function coverage, the uncovered functions, LCOV + Cobertura exports, and a threshold gate.',
-   chips:['go test -cover','LCOV','Cobertura','COVERAGE Gate']},
+  {id:'coverage', t:'Go Code Coverage', ic:'📈', cc:'#39c5cf', mode:'custom', tracks:['coverage','delivery'], scope:'on an existing Go repo',
+   p:'Measure real coverage with -coverprofile, then CLOSE the gap: write unit tests for the uncovered functions, compile and run them, re-measure, and raise a pull request with the verified tests. Leave the destination blank to measure only.',
+   chips:['go test -cover','Go Test Gen','verified','LCOV + Cobertura','COVERAGE Gate','PR']},
   {id:'custom', t:'Custom', ic:'⚙️', cc:'#7c8db5', mode:'custom', custom:true, scope:'compose your own',
    p:'Drag agents onto the canvas to build a flow. Test a repo, or switch on “build from a story”.', chips:['Build it yourself']},
 ];
@@ -1527,7 +1529,8 @@ const FLOW_INTAKE={   // keyed by flow id
   security:{fields:[F_REPO, FIELD('scope_prompt','What to scan','textarea',false,'e.g. "auth & payment modules" — blank = whole repo','Areas for the SAST scan to focus on.')]},
   regression:{fields:[FIELD('repo','Regression suite repository','text',true,'https://github.com/org/regression-tests','Your existing regression automation code — runs in Jenkins.'), FIELD('base_url','App URL','text',false,'https://staging.yourapp.com','Where the regression cases execute against.'), FIELD('tags','Suites / tags to run','text',false,'@smoke @invoice — blank runs everything','Scope the (possibly hundreds of) cases; Jenkins runs them and self-heal loops until green.'), F_LOGIN_URL, F_LOGIN_USER, F_LOGIN_PASS]},
   coverage:{fields:[F_REPO,
-    FIELD('min_coverage','Minimum coverage %','text',false,'70','Statement-coverage floor for the COVERAGE gate (policy default 70%).'),
+    FIELD('min_coverage','Minimum coverage %','text',false,'80','Statement-coverage floor for the COVERAGE gate (policy default 70%).'),
+    FIELD('dest_repo','Destination repo for the fix (owner/repo)','text',false,'org/service — blank = measure only, no PR','Where the generated tests are committed and the pull request is raised. Usually the same repository you are measuring.'),
     FIELD('coverage_blocking','Block below threshold? (yes/no)','text',false,'no','Advisory by default (observe-first); yes = the gate FAILS below the threshold.')]},
   unit:{fields:[F_REPO, FIELD('test_cmd','Unit test command (optional)','text',false,'npm test — blank = auto-detect','How the Unit Test agent runs the suite in the repo.')]},
 };
@@ -1550,7 +1553,7 @@ function loadCfgProjects(){
   }).catch(()=>{});
 }
 // Map a Configuration's stored fields → the intake field ids it satisfies (so we can hide them).
-const _PROV_LABEL={repo:'repo',base_url:'app URL',login_url:'login path',login_user:'login user',login_password:'login password',jira:'Jira connection'};
+const _PROV_LABEL={repo:'source repo',dest_repo:'PR destination',base_url:'app URL',login_url:'login path',login_user:'login user',login_password:'login password',jira:'Jira connection'};
 function providedFields(p){
   const s=new Set(); if(!p) return s; const c=p.config||{};
   if(c.source_repo) s.add('repo');
@@ -1558,6 +1561,7 @@ function providedFields(p){
   if(c.login_url) s.add('login_url');
   if(c.login_user) s.add('login_user');
   if(c.has_login_password) s.add('login_password');
+  if(c.dest_repo) s.add('dest_repo');
   return s;
 }
 function projectHasJira(p){ return !!(p && (p.config||{}).jira_url); }
@@ -1565,9 +1569,19 @@ function renderCfgProvides(){
   const box=$('cfgProvides'); if(!box) return;
   if(!activeProject){ box.style.display='none'; box.innerHTML=''; return; }
   const prov=[...providedFields(activeProject)]; if(projectHasJira(activeProject)) prov.push('jira');
+  if((activeProject.config||{}).dest_repo) prov.push('dest_repo');
   box.style.display='flex';
+  // Show the VALUE, not just the field name. A Configuration silently decides which
+  // repository the run analyses and where the PR lands; "✓ repo" told you a repo was
+  // supplied but not that it was the wrong one for the playbook you just picked.
+  const c=activeProject.config||{};
+  const _PROV_VALUE={repo:c.source_repo, base_url:c.app_url, login_url:c.login_url,
+                     login_user:c.login_user, dest_repo:c.dest_repo,
+                     jira:(c.jira_url||'').replace(/^https?:\/\//,'')};
   box.innerHTML = `<span class="lead">Provided by this Configuration:</span>`
-    + prov.map(k=>`<span class="prov">✓ ${escapeHtml(_PROV_LABEL[k]||k)}</span>`).join('')
+    + prov.map(k=>{ const v=_PROV_VALUE[k];
+        return `<span class="prov">✓ ${escapeHtml(_PROV_LABEL[k]||k)}${v?` <b>${escapeHtml(v)}</b>`:''}</span>`;
+      }).join('')
     + `<span style="margin-left:auto">secrets stay encrypted — decrypted server-side only for the run</span>`;
 }
 function fieldsFor(){
@@ -1586,6 +1600,10 @@ function fieldsFor(){
     : f);
   // GitHub connected → the Source repository picker provides the repo; drop the text field.
   if(GH.connected) fs = fs.filter(f=>f.id!=='repo');
+  // The destination text field goes only when the destination PICKER is actually visible.
+  // That card is hidden whenever a Configuration supplies the repo, so keying off
+  // GH.connected alone left a Configuration without a destination unable to name one at all.
+  if(pickersVisible()) fs = fs.filter(f=>f.id!=='dest_repo');
   // A saved Configuration already supplies these — don't ask again.
   const prov=providedFields(activeProject);
   return fs.filter(f=>!prov.has(f.id));
@@ -1613,12 +1631,22 @@ function renderIntake(){
 }
 function renderScopeSummary(){
   const lanes=activeColumns(currentCfg());
-  $('runScopeSummary').innerHTML = lanes.length? lanes.map(c=>`<span>${c.icon} ${escapeHtml(c.label)}</span>`).join('') : '<span>nothing selected</span>';
+  // The chips were lane-level, so the agent doing the work inside a lane went unnamed: the
+  // coverage lane listed "Go Coverage" and never "Go Test Gen", the agent that actually
+  // writes the tests. The label says "agents", so list the agents.
+  const chips=[];
+  lanes.forEach(c=>{ chips.push({icon:c.icon, label:c.label});
+    (c.children||[]).forEach(ch=> chips.push({icon:ch.icon, label:ch.label, sub:true})); });
+  $('runScopeSummary').innerHTML = chips.length
+    ? chips.map(c=>`<span${c.sub?' class="sub"':''}>${c.icon} ${escapeHtml(c.label)}</span>`).join('')
+    : '<span>nothing selected</span>';
+}
+function pickersVisible(){
+  return GH.connected && !(activeProject && providedFields(activeProject).has('repo'));
 }
 function refreshConfig(){
   // Hide the GitHub repo pickers when a Configuration already supplies the repo.
-  if($('githubCard')) $('githubCard').style.display =
-    (GH.connected && !(activeProject && providedFields(activeProject).has('repo'))) ? '' : 'none';
+  if($('githubCard')) $('githubCard').style.display = pickersVisible() ? '' : 'none';
   renderIntake(); renderScopeSummary(); renderPreviewCard();
 }
 if($('cfgProject')) $('cfgProject').addEventListener('change', ()=>{

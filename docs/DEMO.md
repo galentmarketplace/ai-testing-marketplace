@@ -197,9 +197,14 @@ This is the strongest of the four, because it does not stop at reporting a gap. 
 uncovered functions, reads their real source, writes tests, **compiles and runs them**, and
 re-measures. Only then does it raise a pull request.
 
-Playbook **Go Code Coverage** with the **delivery** track on. Repository
-`https://github.com/galentmarketplace/go-orders-service`, destination the same repository,
-minimum coverage `80`.
+**Playbooks → Go Code Coverage.** Under *Use a saved Configuration* pick
+**Go Orders Service (coverage)** — it supplies both the source repository and the pull-request
+destination, and the screen says so in the green chips. Set **Minimum coverage %** to `80`,
+untick **Mock mode**, and press **Run pipeline**. Nothing else to fill in.
+
+> If you would rather not use a saved Configuration, pick the source and destination
+> repositories in the *Repositories* card instead — same result. Leaving the destination
+> blank measures without raising a pull request.
 
 Narrate it in four beats, which is the order the screen shows:
 
@@ -213,7 +218,7 @@ Narrate it in four beats, which is the order the screen shows:
 **Measured: 5 runs out of 5 identical.** 19 to 22 seconds for the coverage track, about
 35 with the pull request, and $0.033 to $0.041 a run.
 
-> **Leave pull request #4 open.** It contains this same fix. Merging it raises the
+> **Leave the open coverage pull request open.** It contains this same fix. Merging it raises the
 > repository to 96.4%, and then a live run correctly finds nothing to do and the whole
 > demonstration disappears. The gap in `go-orders-service` is the demo asset.
 
