@@ -1591,13 +1591,17 @@ function renderResults(){
   const gPass=gates.filter(g=>g.verdict==='pass').length, gTot=gates.length;
   const tPass=runs.reduce((a,r)=>a+r.passed,0), tTot=runs.reduce((a,r)=>a+r.passed+r.failed,0);
   const cycles=RUN.gates.filter(g=>g.verdict==='fail').length;   // self-correction iterations to reach green
-  const secs=((Date.now()-RUN.start)/1000).toFixed(1);
+  // A replayed run opened long after it finished would otherwise read 0.0s, because
+  // RUN.start is when the BROWSER opened it. Prefer the run's own stored timestamps.
+  const secs = (RUN.t_started && RUN.t_finished)
+    ? Math.max(0, RUN.t_finished - RUN.t_started).toFixed(1)
+    : ((Date.now()-RUN.start)/1000).toFixed(1);
   const cls=blocked?'bad':((gTot&&gPass<gTot)?'warn':'ok');
   const title=blocked?'Blocked — human review needed':(shipped?'Shipped — pull request opened':'Completed successfully');
   const iterNote = blocked ? '' : (cycles? ` · green after ${cycles} self-correction${cycles>1?'s':''}` : ' · passed first iteration');
   $('verdict').className='verdict '+cls;
   $('verdict').innerHTML=`<div class="badge">${blocked?'⛔':'✓'}</div>
-    <div><h2>${title}</h2><p>${escapeHtml(RUN.flow?RUN.flow.t:RUN.mode)} · scope <b>${escapeHtml(RUN.mode)}</b>${iterNote}</p></div>
+    <div><h2>${title}</h2><p>${escapeHtml(RUN.flowName || (RUN.flow?RUN.flow.t:RUN.mode))} · scope <b>${escapeHtml(RUN.modeName || RUN.mode)}</b>${iterNote}</p></div>
     <div class="meta">${RUN.mock?'mock run':'live Claude'}<br>${secs}s</div>`;
   const tiles=[
     {v:`${gPass}/${gTot||0}`, k:'Gates passed', sub:'final verdicts'},
@@ -1749,8 +1753,11 @@ function renderJourney(gateTries){
     const ran = RUN.seen.has(st.node);
     const gd = st.gate ? finalGate(st.gate) : null;
     const arts = _artsFor(st.arts);
-    // include the stage only if it actually took part in this run
-    if(!ran && !gd && !arts.length) continue;
+    // Include a stage only if ITS OWN agent ran, or it produced its own artifacts.
+    // A gate is not evidence: Performance and Playwright both report to QG1, so keying off
+    // the gate showed a "Performance" stage — rendering the functional pass rate under it —
+    // on runs where no performance test existed at all.
+    if(!ran && !arts.length) continue;
     const healed = st.gate && (gateTries[st.gate]||0)>1;
     let status='ran', label='RAN';
     if(gd){ status = gd.verdict==='pass' ? (healed?'healed':'pass') : 'fail'; label = gd.verdict==='pass' ? (healed?'HEALED':'PASS') : 'FAILED'; }
@@ -1949,8 +1956,14 @@ function handleSSE(ev, data){
 function resumeRun(runId){
   fetch('/api/runs/'+runId).then(r=> r.ok?r.json():null).then(r=>{
     const terminal = r && ['done','blocked','error','interrupted'].includes(r.status);
+    const t0 = r && Number(r.created_at), t1 = r && Number(r.updated_at);
     REPLAY_SILENT = !!terminal;
     resetRun(); resetUI();
+    if(t0 && t1){ RUN.t_started = t0; RUN.t_finished = t1; }
+    // The flow name and scope must describe THIS run, not whatever the sidebar currently
+    // has selected — a replay was labelling every run with the last flow the user clicked.
+    if(r && r.flow) RUN.flowName = r.flow;
+    if(r && r.mode) RUN.modeName = r.mode;
     if(terminal){ showView('results');
       $('verdict').className='verdict'; $('verdict').innerHTML='<div class="badge">⏳</div><div><h2>Loading run…</h2><p>fetching results</p></div>';
       ['sources','sourcesHead','journey','resultLinks'].forEach(id=>{ const e=$(id); if(e) e.innerHTML=''; });
