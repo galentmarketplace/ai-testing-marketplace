@@ -1568,8 +1568,8 @@ function projectHasJira(p){ return !!(p && (p.config||{}).jira_url); }
 function renderCfgProvides(){
   const box=$('cfgProvides'); if(!box) return;
   if(!activeProject){ box.style.display='none'; box.innerHTML=''; return; }
+  // dest_repo already comes from providedFields — pushing it again rendered the chip twice.
   const prov=[...providedFields(activeProject)]; if(projectHasJira(activeProject)) prov.push('jira');
-  if((activeProject.config||{}).dest_repo) prov.push('dest_repo');
   box.style.display='flex';
   // Show the VALUE, not just the field name. A Configuration silently decides which
   // repository the run analyses and where the PR lands; "✓ repo" told you a repo was

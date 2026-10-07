@@ -85,3 +85,13 @@ def test_the_runbook_no_longer_asks_for_a_toggle_that_does_not_exist():
 
 if __name__ == "__main__":     # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+def test_each_provided_field_is_listed_once():
+    """dest_repo was both in providedFields and pushed again, so the chip rendered twice."""
+    body = HTML_NOW().split("function renderCfgProvides()", 1)[1].split("\nfunction ", 1)[0]
+    assert body.count("prov.push('dest_repo')") == 0
+
+
+def HTML_NOW():
+    return Path("web/static/index.html").read_text()
