@@ -25,6 +25,7 @@ from ... import runctx
 from ...integration import github, jenkins
 from ...llm import call_llm_json
 from ...registry import AgentSpec, DisplayNode
+from ...runner.executor import execute_scripts
 from ...state import GateDecision, PipelineState
 from ..heal_agent import heal_regression
 from ..ui_automation_agent import generate_ui_scripts
@@ -304,6 +305,25 @@ def _heal_regression_branch(state: PipelineState) -> list[str]:
     return committed
 
 
+
+def _verify_locally(s: PipelineState) -> tuple[bool, str]:
+    """Run the regenerated spec locally and report whether it actually passes.
+
+    A repair that cannot pass on this machine will not pass in CI either, and finding that
+    out from a Jenkins build costs minutes per attempt.
+    """
+    try:
+        upd = execute_scripts(s)
+    except Exception as exc:                      # a runner problem is not a repair verdict
+        return True, f"local verification unavailable ({exc})"
+    runs = upd.get("run_results") or []
+    last = runs[-1] if runs else None
+    if not last:
+        return True, "local verification produced no result"
+    passed, failed = last.get("passed", 0), last.get("failed", 0)
+    return failed == 0, f"{passed} passed, {failed} failed locally"
+
+
 def self_heal(state: PipelineState) -> dict:
     """The ONE self-heal agent. Fired whenever a run fails — local regression (QG2) or a Jenkins run
     (JENKINS gate). It repairs whatever actually failed and commits to the PR branch so the next
@@ -320,9 +340,19 @@ def self_heal(state: PipelineState) -> dict:
     heal_reg = ("regression" in tracks) and suite in ("regression", "jenkins", "")
 
     updates, s, committed = {}, state, []
+    verdict = ""
     if heal_ui:
         upd = generate_ui_scripts(s); s = {**s, **upd}; updates.update(upd)
-        committed += _commit_fixes(s)
+        # VERIFY BEFORE COMMITTING. Committing a repair unseen costs a full CI build to
+        # discover it is still broken — observed live as six consecutive Jenkins failures,
+        # each several minutes, because a regenerated locator matched two elements and
+        # nothing ran it before pushing. One local run settles that in seconds.
+        ok, verdict = _verify_locally(s)
+        if ok:
+            committed += _commit_fixes(s)
+        else:
+            print(f"  [Self-Heal] repair NOT committed — it still fails locally ({verdict}). "
+                  "Spending a CI build on it would prove the same thing more slowly.")
     if heal_reg:
         if has_branch:
             committed += _heal_regression_branch(s)   # real: repair the repo's failing spec on the branch
@@ -332,10 +362,13 @@ def self_heal(state: PipelineState) -> dict:
         if _has_automation(state) or "functional" in tracks:
             upd = generate_ui_scripts(s); s = {**s, **upd}; updates.update(upd); committed += _commit_fixes(s)
 
-    where = f"committed {len(committed)} fix(es) to the branch" if committed else "no committable fix produced"
+    where = (f"committed {len(committed)} fix(es) to the branch" if committed
+             else (f"no committable fix — the repair still fails locally ({verdict})" if verdict
+                   else "no committable fix produced"))
     print(f"  [Self-Heal] {'UI ' if heal_ui else ''}{'regression ' if heal_reg else ''}heal after "
           f"{suite or 'a'} failure; {where}")
-    return {**updates, "ci_heal": {"committed": committed, "suite": suite}}
+    return {**updates, "ci_heal": {"committed": committed, "suite": suite,
+                                   "local_verification": verdict or "not run"}}
 
 
 _J, _EVAL, _HEAL = "#e05c3e", "#d29922", "#f778ba"

@@ -49,7 +49,7 @@ jobs:
                     steps { git branch: (params.BRANCH ?: 'main'), url: params.REPO, credentialsId: 'github' }
                   }
                   stage('Install') {
-                    steps { sh 'export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1; export PLAYWRIGHT_BROWSERS_PATH=/ms-playwright; npm ci --ignore-scripts || npm install --ignore-scripts || true; npm install -D @playwright/test@1.55.0 --ignore-scripts || true; npx playwright install chromium || true' }
+                    steps { sh 'export PLAYWRIGHT_BROWSERS_PATH=/ms-playwright; npm ci || npm install; npx playwright install chromium' }
                   }
                   stage('Playwright') {
                     steps {

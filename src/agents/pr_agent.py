@@ -26,6 +26,9 @@ Respond with ONLY a JSON object: {"title": "...", "body": "..."}"""
 _DEST = {".spec.ts": "tests", ".spec.js": "tests", ".k6.js": "perf",
          ".axe.json": "a11y", ".pact.json": "contract", ".semgrep.yml": "security"}
 
+# Run output, not source. JUnit reports were landing in tests/ beside the specs.
+_NEVER_COMMIT = {".xml", ".log", ".zip", ".png", ".webm"}
+
 
 def _draft(state: PipelineState) -> dict:
     try:
@@ -47,8 +50,18 @@ def _collect_files(state: PipelineState) -> tuple[dict, bool]:
     files: dict[str, str] = {}
     for art in state.get("test_artifacts", []):
         p = Path(art["path"])
+        if p.suffix in _NEVER_COMMIT:
+            continue            # run reports are evidence, not source — they belong to the run
         folder = next((v for suf, v in _DEST.items() if p.name.endswith(suf)), "tests")
         files[f"{folder}/{p.name}"] = p.read_text()
+        # Every generated spec starts `import { test, expect } from './fixtures'`. Those
+        # fixtures live beside the spec in the run workspace, so the LOCAL run passes — but
+        # they were never committed, so CI checked out a spec importing a module that does
+        # not exist and the whole suite failed to load before a single test ran. Ship them.
+        if p.name.endswith((".spec.ts", ".spec.js")):
+            fx = p.parent / "fixtures.ts"
+            if fx.is_file():
+                files[f"{folder}/fixtures.ts"] = fx.read_text()
     for art in (state.get("security_artifacts", []) + state.get("a11y_artifacts", [])
                 + state.get("contract_artifacts", [])):
         p = Path(art["path"])
