@@ -199,3 +199,63 @@ The full ticket-to-merge chain has been proven in pieces, not yet in one unbroke
 pass. And **the run converges on about five attempts in seven** — when it does not, it blocks
 for a human rather than passing, which is the right failure but still a gap. Reliability of
 convergence is the main engineering work remaining.
+
+
+---
+
+# The other four tracks
+
+Each verified live on 7 October. Pick a playbook, paste the inputs, untick **Mock mode**.
+
+## Go code coverage — ~100s
+
+Playbook **Go Code Coverage**. Repository `https://github.com/gorilla/mux`, minimum coverage `85`.
+
+Result: 90.7% on 652 of 719 statements, COVERAGE gate pass, 7 uncovered functions each at an
+exact source line, LCOV and Cobertura exported.
+
+**The point to make:** it also reports that coverage only covers 80% of the source files, so
+the effective figure is 72.6%. A tool reporting 90.7% alone is flattering you.
+
+## Unit tests — ~6s
+
+Playbook **Unit Tests**. Repository `https://github.com/galentmarketplace/sample-app-web`.
+
+Result: the repository's own jest suite, 146 passed, 0 failed, UNIT gate pass.
+
+**The point to make:** these are the team's existing tests, run as they are. Nothing was
+generated and nothing was replaced.
+
+## Security audit — ~45s
+
+Playbook **Security Audit**. Repository `https://github.com/galentmarketplace/sample-app-web`.
+
+Result: 95 findings (67 high, 27 medium, 1 low) across six methodologies — static analysis,
+dependencies and CVEs, secrets, infrastructure misconfiguration, container image, and a
+software bill of materials. SARIF 2.1.0 emitted for GitHub code scanning.
+
+**The point to make:** one pass, six disciplines, and it degrades honestly — a methodology
+whose scanner is absent is reported as not run rather than as clean.
+
+## Performance — ~120s
+
+Playbook **Performance**, with the deploy track enabled. Repository
+`https://github.com/galentmarketplace/sample-app-web`, deploy `yes`, type `load`.
+
+Result: the platform builds and boots the application itself, then load-tests the build it
+just deployed. 4274 checks passed, p95 2ms, error rate 0.0%, QG1 pass.
+
+**The point to make:** it tests what it deployed, not a URL someone typed last month. And it
+load-tests the application's real routes, discovered from the code.
+
+**Do not** point a load test at saucedemo.com or any third-party site. That is someone else's
+infrastructure. The deploy track exists so you are always testing your own.
+
+---
+
+## If you run all five in one sitting
+
+Functional, then these four, is roughly 10 minutes of runtime and under two dollars. Start
+each from Playbooks and let the previous results stay open in other tabs, so you can compare
+a coverage gate against a security gate against a performance gate and make the real point:
+**every track reports the same way, and every one tells you what it did not verify.**
