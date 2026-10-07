@@ -32,6 +32,8 @@ Rules — make it enterprise-grade, not a toy:
   system-under-test cannot throttle the test and hide its own slowdown.
 - Thresholds must gate on p95 AND p99 AND error rate AND a throughput floor:
   http_req_duration: ['p(95)<800','p(99)<1500'], http_req_failed: ['rate<0.01'], checks: ['rate>0.99'].
+- ALWAYS set summaryTrendStats: ['avg','min','med','p(90)','p(95)','p(99)','max'] in options.
+  Without it k6's summary omits p(99) entirely and the p99 threshold can never be reported.
 - Tag each request with { tags: { endpoint: '<name>' } } and add a per-endpoint threshold
   'http_req_duration{endpoint:<name>}': ['p(95)<1000'] so a slow endpoint fails even if the global passes.
 - Parameterize data with SharedArray to avoid cache-hit artifacts. BASE_URL/TOKEN from __ENV. Add think time.
@@ -131,6 +133,11 @@ def _build_real_k6(analysis: dict, base_url: str, inp: dict) -> str:
         ep_js,
         "]));",
         "export const options = {",
+        "  // k6's default summary carries p(90) and p(95) only, so the p(99) THRESHOLD above",
+        "  // was evaluated by k6 but never reached the report: http_req_duration had no",
+        "  // 'p(99)' key, PerfMetrics.p99_ms stayed null, and the gate's p99 criterion was",
+        "  // skipped on every run — a declared SLO that could not fail. Ask for it.",
+        "  summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'max'],",
         "  scenarios: {",
         scen_body,
         "  },",

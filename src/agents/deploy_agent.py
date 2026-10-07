@@ -55,8 +55,13 @@ def _wanted(state: PipelineState, inp: dict) -> bool:
         return False
     if flag in ("yes", "true", "1", "on"):
         return True
-    # Default: deploy when this run actually built something — otherwise the configured
-    # base_url already points at a running app and rebuilding it buys nothing.
+    # The deploy track selected on its own is an explicit request to deploy. Without this a
+    # playbook that includes the track still skipped it, so the load test fell back to the
+    # configured base_url — which for a saved Configuration can be a THIRD-PARTY site.
+    if "deploy" in set((state.get("run_config") or {}).get("tracks") or []):
+        return True
+    # Otherwise: deploy when this run actually built something — a configured base_url
+    # already points at a running app and rebuilding it buys nothing.
     return bool(state.get("code_artifacts"))
 
 

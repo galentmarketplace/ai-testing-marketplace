@@ -257,17 +257,32 @@ whose scanner is absent is reported as not run rather than as clean.
 
 ## Performance — ~120s
 
-Playbook **Performance**, with the deploy track enabled. Repository
-`https://github.com/galentmarketplace/sample-app-web`, deploy `yes`, type `load`.
+**Playbooks → Performance.** Under *Use a saved Configuration* pick **Sample App Web
+(performance)**. The flow already includes the deploy step, so leave **Build & deploy the app
+first?** as `yes`; set **Target load** to `40` and **Test type** to `load`. Untick **Mock
+mode** and run.
 
 Result: the platform builds and boots the application itself, then load-tests the build it
-just deployed. 4274 checks passed, p95 2ms, error rate 0.0%, QG1 pass.
+just deployed — p95 1.6ms, 40.3 rps, error rate 0.00%, 4273 checks, QG1 pass, in about 117
+seconds.
 
-**The point to make:** it tests what it deployed, not a URL someone typed last month. And it
-load-tests the application's real routes, discovered from the code.
+Open the **Performance** panel on the Results screen and read the top line out loud:
 
-**Do not** point a load test at saucedemo.com or any third-party site. That is someone else's
-infrastructure. The deploy track exists so you are always testing your own.
+```
+Tested  http://127.0.0.1:58456   ✓ the build this run deployed · node
+```
+
+**The point to make:** it tests what it deployed, not a URL someone typed last month — and
+the report says which, so nobody has to take it on trust. It also load-tests the
+application's real routes, discovered from the code (7 endpoint SLOs here, not a guessed
+path). The threshold table below it shows each measurement against the policy the gate
+actually applied, rather than restating a number from a slide.
+
+**Do not** point a load test at saucedemo.com or any third-party site — that is someone
+else's infrastructure, and an open-model arrival-rate test is indifferent to whether the
+host can cope. Deploying is the default for exactly this reason: if you set deploy to `no`,
+whatever URL you supply takes the full offered load, and the panel will mark the target
+`⚠ a pre-existing URL — this run did not build or boot it`.
 
 ---
 

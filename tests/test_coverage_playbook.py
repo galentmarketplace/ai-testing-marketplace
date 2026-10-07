@@ -95,3 +95,10 @@ def test_each_provided_field_is_listed_once():
 
 def HTML_NOW():
     return Path("web/static/index.html").read_text()
+
+
+def test_the_decisive_coverage_inputs_are_shown_not_folded():
+    intake = HTML_NOW().split("  coverage:{fields:[", 1)[1].split("]},", 1)[0]
+    for fid in ("min_coverage", "dest_repo"):
+        line = next(ln for ln in intake.splitlines() if f"FIELD('{fid}'" in ln)
+        assert line.rstrip().endswith("true),"), f"{fid} is hidden in the optional fold"

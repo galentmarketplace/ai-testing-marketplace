@@ -416,6 +416,15 @@
   .covbar.good > span { background:var(--ok); }
   .covbar.part > span { background:var(--warn); }
   .covbar.poor > span { background:var(--fail); }
+  .perf-target { font-size:12.5px; margin-bottom:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .perf-target .k { color:var(--muted); }
+  .perf-target code { font-family:var(--font-mono); font-size:12px; background:var(--panel2);
+                      padding:2px 7px; border-radius:6px; word-break:break-all; }
+  .perf-src { font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid transparent; }
+  .perf-src.ok { color:var(--ok); background:rgba(34,197,94,.12); border-color:rgba(34,197,94,.3); }
+  .perf-src.warn { color:var(--warn); background:rgba(210,153,34,.12); border-color:rgba(210,153,34,.35); }
+  .perf-note { margin-top:8px; font-size:11.5px; color:var(--muted); }
+  .covtable td .dim, .covtable td.num .dim { color:var(--muted); font-size:11px; }
   .cov-sec { margin-top:20px; }
   .cov-sec h4 { margin:0 0 10px; font-size:13px; display:flex; align-items:baseline; gap:8px; }
   .cov-sec h4 .n { font-weight:400; font-size:11.5px; color:var(--muted); font-family:var(--font-mono); }
@@ -960,6 +969,10 @@
       <span class="journey-sub">measured by running the repository's own tests, before and after this run</span></div>
     <div class="covreport" id="covReport" style="display:none"></div>
 
+    <div class="cov-head" id="perfHead" style="display:none"><h3>Performance</h3>
+      <span class="journey-sub">what was load-tested, at what offered rate, and against which thresholds</span></div>
+    <div class="covreport" id="perfReport" style="display:none"></div>
+
     <div class="sources-head" id="sourcesHead" style="display:none"><h3>Sources of truth</h3>
       <span class="journey-sub">what this run was driven &amp; validated against — nothing assumed</span></div>
     <div class="sources" id="sources" style="display:none"></div>
@@ -1087,7 +1100,7 @@ function applyManifest(m){
   COLUMNS = m.columns.map(c=>({
     id:c.id, label:c.label, cap:c.cap, icon:c.icon, color:c.color,
     tracks:c.tracks||[], needs_build:!!c.needs_build, ship:!!c.ship, always:!!c.always,
-    children:(c.children||[]).map(ch=>({id:ch.id,label:ch.label,cap:ch.cap,icon:ch.icon,color:ch.color,kind:ch.kind}))
+    children:(c.children||[]).map(ch=>({id:ch.id,label:ch.label,cap:ch.cap,icon:ch.icon,color:ch.color,kind:ch.kind,tracks:ch.tracks||[],agent:ch.agent}))
   }));
   ROUTE = Object.assign({}, m.route, {analyze_failure:[], blocked:[], analyze_repo:[]});
   AGENT_COL={}; CHILD_SPEC={};
@@ -1466,9 +1479,9 @@ const FLOWS=[
   {id:'functional', t:'Functional (Jira → Cases → Automation)', ic:'🎭', cc:'#58a6ff', mode:'custom', tracks:['criteria','functional','delivery','jenkins'], scope:'requirements → production',
    p:'From the source of truth: parse acceptance criteria (Jira) → derive functional test cases → automate each case (grounded in the real app) → PR → Jenkins → self-heal until GREEN.',
    chips:['Acceptance Criteria','Functional Cases','Playwright Agent','PR','Jenkins CI']},
-  {id:'perf', t:'Performance', ic:'⚡', cc:'#3fb0c9', mode:'perf', scope:'on an existing repo',
-   p:'Run the performance agent independently on a repo — k6 load test, p95 / error-rate thresholds.',
-   chips:['Performance','k6 Runner','QG1']},
+  {id:'perf', t:'Performance', ic:'⚡', cc:'#3fb0c9', mode:'custom', tracks:['perf','deploy'], scope:'on an existing repo',
+   p:'Build and boot the app on an ephemeral URL, discover its real routes from the code, then load-test the build it just deployed — open-model k6 arrival rate, p95 / p99 / throughput / error-rate thresholds, plus Core Web Vitals. Set deploy to no to test an existing URL instead.',
+   chips:['Deploy','Performance','k6 Runner','Web Vitals','QG1']},
   {id:'security', t:'Security Audit', ic:'🛡️', cc:'#e3b341', mode:'custom', tracks:['security'], scope:'on an existing repo',
    p:'Run the security agent independently — author a SAST ruleset, scan the repo, gate on findings.',
    chips:['Security','SAST Runner','SEC Gate']},
@@ -1507,7 +1520,7 @@ function selectFlow(f){
 }
 
 // ---- Per-flow intake: each flow asks for exactly what its agents need ----
-const FIELD=(id,label,type,required,placeholder,help)=>({id,label,type,required,placeholder,help});
+const FIELD=(id,label,type,required,placeholder,help,primary)=>({id,label,type,required,placeholder,help,primary});
 const F_REPO=FIELD('repo','Target repository','text',true,'https://github.com/org/repo  (or git URL)','The repo the agents clone, study, and test against.');
 const F_AC=FIELD('ac_source','Acceptance criteria  ·  or Jira link','textarea',true,'Paste acceptance criteria, or a Jira link like PROJ-123 to extract them','The Acceptance Criteria agent parses this and the whole flow is designed around it.');
 const F_SCOPE=FIELD('scope_prompt','What to cover','textarea',false,'e.g. "from login through to checkout" — leave blank to cover the whole app','Tell the agent which user journeys / areas to generate for.');
@@ -1519,9 +1532,10 @@ const FLOW_INTAKE={   // keyed by flow id
   full:{fields:[F_AC, FIELD('repo','Target repository','text',false,'https://github.com/org/repo','Where the Dev agent implements the feature and opens the PR.')]},
   functional:{fields:[FIELD('ac_source','Jira ticket / acceptance criteria','textarea',true,'Paste a Jira link (PROJ-123) or the acceptance criteria — the source of truth the cases are derived from','The Acceptance Criteria agent parses this; the Functional Case agent derives cases from it.'), F_REPO, F_SCOPE, FIELD('base_url','App URL','text',false,'https://staging.yourapp.com','The running app the automation grounds against and executes.'), F_LOGIN_URL, F_LOGIN_USER, F_LOGIN_PASS]},
   perf:{fields:[F_REPO,
-    FIELD('base_url','API base URL (deployed)','text',false,'https://api.yourapp.com','Deployed host the k6 load test hits — point it at your AWS/GCP ingress, not localhost.'),
-    FIELD('load','Target load','text',false,'80 rps  (open-model arrival rate)','Offered requests/sec — arrival-rate so the server can’t throttle the test.'),
-    FIELD('perf_type','Test type','text',false,'load | stress | soak | spike | breakpoint','Which workload to generate; blank = load. Use breakpoint to find per-pod capacity.'),
+    FIELD('deploy','Build & deploy the app first? (yes/no)','text',false,'yes — build this repo and load-test what it boots','yes = the platform builds the repo, boots it on an ephemeral URL and tests THAT. no = test the URL below instead.',true),
+    FIELD('base_url','API base URL  ·  only when deploy = no','text',false,'https://api.yourapp.com','Ignored when the run deploys: a build this run booted always wins, so the test cannot hit a stale or third-party host by accident.'),
+    FIELD('load','Target load','text',false,'80 rps  (open-model arrival rate)','Offered requests/sec — arrival-rate so the server can’t throttle the test.',true),
+    FIELD('perf_type','Test type','text',false,'load | stress | soak | spike | breakpoint','Which workload to generate; blank = load. Use breakpoint to find per-pod capacity.',true),
     FIELD('k8s_namespace','K8s namespace  ·  for per-pod CPU/mem','text',false,'production','Namespace of the deployed pods to sample while the load runs.'),
     FIELD('k8s_selector','Pod label selector','text',false,'app=idurar-api','Which pod(s) to sample CPU/mem/restarts for (kubectl -l). Blank = skip per-pod metrics.'),
     FIELD('k8s_kubeconfig','Kubeconfig path (optional)','text',false,'/path/to/kubeconfig  — or set KUBECONFIG','Cluster access for kubectl top (read-only). Blank uses the KUBECONFIG env.'),
@@ -1529,8 +1543,8 @@ const FLOW_INTAKE={   // keyed by flow id
   security:{fields:[F_REPO, FIELD('scope_prompt','What to scan','textarea',false,'e.g. "auth & payment modules" — blank = whole repo','Areas for the SAST scan to focus on.')]},
   regression:{fields:[FIELD('repo','Regression suite repository','text',true,'https://github.com/org/regression-tests','Your existing regression automation code — runs in Jenkins.'), FIELD('base_url','App URL','text',false,'https://staging.yourapp.com','Where the regression cases execute against.'), FIELD('tags','Suites / tags to run','text',false,'@smoke @invoice — blank runs everything','Scope the (possibly hundreds of) cases; Jenkins runs them and self-heal loops until green.'), F_LOGIN_URL, F_LOGIN_USER, F_LOGIN_PASS]},
   coverage:{fields:[F_REPO,
-    FIELD('min_coverage','Minimum coverage %','text',false,'80','Statement-coverage floor for the COVERAGE gate (policy default 70%).'),
-    FIELD('dest_repo','Destination repo for the fix (owner/repo)','text',false,'org/service — blank = measure only, no PR','Where the generated tests are committed and the pull request is raised. Usually the same repository you are measuring.'),
+    FIELD('min_coverage','Minimum coverage %','text',false,'80','Statement-coverage floor for the COVERAGE gate (policy default 70%).',true),
+    FIELD('dest_repo','Destination repo for the fix (owner/repo)','text',false,'org/service — blank = measure only, no PR','Where the generated tests are committed and the pull request is raised. Usually the same repository you are measuring.',true),
     FIELD('coverage_blocking','Block below threshold? (yes/no)','text',false,'no','Advisory by default (observe-first); yes = the gate FAILS below the threshold.')]},
   unit:{fields:[F_REPO, FIELD('test_cmd','Unit test command (optional)','text',false,'npm test — blank = auto-detect','How the Unit Test agent runs the suite in the repo.')]},
 };
@@ -1616,11 +1630,15 @@ function fieldHtml(f){
 }
 function renderIntake(){
   const fs=fieldsFor();
-  // Show only the REQUIRED fields; fold the optional ones so a flow isn't a wall of inputs.
-  const req=fs.filter(f=>f.required), opt=fs.filter(f=>!f.required);
+  // Show the REQUIRED fields, plus any marked `primary` — optional but decisive, like the
+  // Performance flow's deploy choice, which decides WHICH HOST takes the load and was
+  // sitting behind a collapsed "Optional details" fold.
+  const req=fs.filter(f=>f.required||f.primary), opt=fs.filter(f=>!(f.required||f.primary));
   let html = req.map(fieldHtml).join('');
+  // Name what is actually in there rather than a fixed example list.
+  const names=opt.slice(0,3).map(f=>f.label.split(/[·(]/)[0].trim().toLowerCase());
   if(opt.length) html += `<details class="opt-fold"${req.length?'':' open'}>`
-    + `<summary>Optional details (${opt.length}) — app URL, login, scope…</summary>`
+    + `<summary>Optional details (${opt.length}) — ${escapeHtml(names.join(', '))}${opt.length>3?'…':''}</summary>`
     + opt.map(fieldHtml).join('') + `</details>`;
   $('intakeBody').innerHTML = fs.length? html : '<div class="empty">This flow needs no extra inputs.</div>';
   $('intakeBody').querySelectorAll('[data-field]').forEach(el=>{
@@ -1634,9 +1652,19 @@ function renderScopeSummary(){
   // The chips were lane-level, so the agent doing the work inside a lane went unnamed: the
   // coverage lane listed "Go Coverage" and never "Go Test Gen", the agent that actually
   // writes the tests. The label says "agents", so list the agents.
-  const chips=[];
-  lanes.forEach(c=>{ chips.push({icon:c.icon, label:c.label});
-    (c.children||[]).forEach(ch=> chips.push({icon:ch.icon, label:ch.label, sub:true})); });
+  const chips=[], seen=new Set();
+  // De-duplicate on the BACKEND agent, not the label: one agent can have two display
+  // nodes (execute_scripts is "Feature Runner" under Playwright and "Perf Runner (k6)"
+  // under Performance), and listing both reads as two agents running.
+  const add=(c,sub)=>{ const key=c.agent||c.id||c.label; if(seen.has(key)) return;
+                       seen.add(key); chips.push({icon:c.icon, label:c.label, sub}); };
+  lanes.forEach(c=>{ add(c,false); (c.children||[]).forEach(ch=> add(ch,true)); });
+  // A gate can judge a track whose lane it is not drawn under: QG1 sits beneath the
+  // Playwright lane yet also judges a perf-only run, so it went unlisted on exactly the
+  // flow whose verdict it produces. Pick up any child whose OWN tracks are in scope.
+  const active=resolveCfg(currentCfg()).tracks;
+  COLUMNS.forEach(c=>(c.children||[]).forEach(ch=>{
+    if((ch.tracks||[]).some(t=>active.has(t))) add(ch,true); }));
   $('runScopeSummary').innerHTML = chips.length
     ? chips.map(c=>`<span${c.sub?' class="sub"':''}>${c.icon} ${escapeHtml(c.label)}</span>`).join('')
     : '<span>nothing selected</span>';
@@ -1676,6 +1704,8 @@ function accumulate(d){ const u=d.update||{};
   if(u.functional_cases) RUN.fcases=u.functional_cases;   // functional test cases derived from AC
   if(u.heal_notes) RUN.heal=u.heal_notes;                 // self-heal repair log (for the failure detail)
   if(u.coverage_report) RUN.coverage=u.coverage_report;   // statement coverage, per file + per function
+  if(u.perf_vitals) RUN.vitals=u.perf_vitals;             // Core Web Vitals (lab) from the deployed build
+  if(u.deployment) RUN.deployment=u.deployment;           // the build this run booted, and where
 }
 // The most relevant Jenkins build link (the final/last run) + its status.
 function _jenkinsLink(){
@@ -1717,7 +1747,10 @@ function renderResults(){
     (!tTot && RUN.coverage && RUN.coverage.ok)
       ? {v:`${(((RUN.coverage.after&&RUN.coverage.after.ok)?RUN.coverage.after.total_pct:RUN.coverage.total_pct)||0).toFixed(1)}%`,
          k:'Coverage', sub: (RUN.coverage.after&&RUN.coverage.after.ok)?`up from ${RUN.coverage.total_pct.toFixed(1)}%`:'statements'}
-      : {v: tTot?`${Math.round(tPass/tTot*100)}%`:'—', k:'Tests passed', sub:`${tPass}/${tTot} cases · final`},
+      : {v: tTot?`${Math.round(tPass/tTot*100)}%`:'—', k:'Tests passed',
+         // k6 reports CHECKS, not acceptance cases; calling 4273 of them "cases" overstates
+         // what a load test verified.
+         sub:`${tPass}/${tTot} ${runs.some(x=>x.perf)?'k6 checks':'cases'} · final`},
     {v:RUN.agents.size, k:'Agents run'},
     {v:cycles, k:'Self-corrections', sub:cycles?'gate fix-loops':'clean run'},
     {v:secs+'s', k:'Duration'},
@@ -1752,6 +1785,7 @@ function renderResults(){
   $('rRuns').innerHTML = runs.length? runs.map(r=>{const total=r.passed+r.failed,ok=r.failed===0,perf=r.perf?` · p95 ${r.perf.p95_ms}ms · err ${(r.perf.error_rate*100).toFixed(1)}%`:'',it=runTries[r.suite]>1?` <span class="m">· iteration ${runTries[r.suite]}</span>`:'';return `<div class="run"><span><b>${r.suite}</b>${it}</span><span class="rate" style="color:${ok?'var(--ok)':'var(--fail)'}">${r.passed}/${total} passed<span class="m">${perf}</span></span></div>`;}).join('') : '<div class="empty">No test runs.</div>';
   renderSources();            // what came in from each source of truth (Jira / dev repo / app)
   renderCoverage();           // the coverage report: total, per file, per function, before → after
+  renderPerformance();        // the load test: what was tested, the latencies, the thresholds
   renderJourney(gateTries);   // the Ticket → Production journey (agent-wise, artifacts per stage)
   // ---- Quick links bar: the PR + the Jenkins run, front-and-centre ----
   const jl=_jenkinsLink();
@@ -1924,11 +1958,100 @@ function renderCoverage(){
   el.innerHTML=`<div class="cov-card">${headline}${fileTable}${fixedTable}${failSec}${restSec}${skipSec}</div>`;
 }
 
+// ===== Performance report: what was tested, how hard, and against which thresholds =====
+// Latency tiers are relative to the POLICY, not absolutes: a p95 is only "good" against the
+// threshold the gate actually applies, so the colour never flatters a slow service.
+function _perfTier(v, limit){ if(v==null||limit==null) return 'good';
+  return v <= limit*0.5 ? 'good' : (v <= limit ? 'part' : 'poor'); }
+function _ms(v){ return v==null ? '—' : (v<10 ? v.toFixed(1) : Math.round(v))+'ms'; }
+
+function renderPerformance(){
+  const head=$('perfHead'), el=$('perfReport'); if(!el) return;
+  // The perf numbers ride on the run result, so a run with no k6 execution has no panel.
+  const r=(RUN.runs||[]).filter(x=>x.perf).pop();
+  const perf=r?r.perf:null;
+  if(!perf && !RUN.vitals){ el.style.display='none'; if(head) head.style.display='none'; return; }
+  el.style.display='block'; if(head) head.style.display='flex';
+
+  // thresholds come from the gate that judged this run, not from a constant duplicated here
+  const qg=(RUN.gates||[]).filter(g=>g.gate==='QG1').pop();
+  const lim=l=>{ const c=((qg&&qg.checks)||[]).find(c=>(c.label||'').startsWith(l));
+                 const m=c&&/([\d.]+)/.exec(c.threshold||''); return m?parseFloat(m[1]):null; };
+  const p95lim=lim('p95'), errlim=lim('error rate');
+
+  // ---- what was actually under test: the build we booted, or a URL someone configured ----
+  const dep=RUN.deployment||{};
+  const deployed=!!(dep.ok&&dep.url);
+  const target = deployed ? dep.url
+    : ((RUN.story&&RUN.story.inputs&&RUN.story.inputs.base_url)||'the configured URL');
+  const origin=deployed
+    ? `<span class="perf-src ok">✓ the build this run deployed${dep.strategy?` · ${escapeHtml(dep.strategy)}`:''}</span>`
+    : `<span class="perf-src warn">⚠ a pre-existing URL — this run did not build or boot it</span>`;
+
+  let html='';
+  if(perf){
+    const t=_perfTier(perf.p95_ms, p95lim);
+    html += `<div class="cov-top">
+      <div class="cov-score ${t}">
+        <div class="cov-pct">${perf.p95_ms==null?'—':(perf.p95_ms<10?perf.p95_ms.toFixed(1):Math.round(perf.p95_ms))}<small>ms</small></div>
+        <div class="cov-lbl">p95 latency</div>
+      </div>
+      <div class="cov-facts">
+        <div class="perf-target"><span class="k">Tested</span> <code>${escapeHtml(target)}</code> ${origin}</div>
+        <div class="cov-rows">
+          <div class="cov-r"><span>Test type</span><b>${escapeHtml(perf.test_type||'load')}</b></div>
+          <div class="cov-r"><span>Throughput</span><b>${perf.throughput_rps==null?'—':perf.throughput_rps+' rps'}</b></div>
+          <div class="cov-r"><span>p99</span><b>${_ms(perf.p99_ms)}</b></div>
+          <div class="cov-r"><span>Error rate</span><b class="${(perf.error_rate||0)<=(errlim==null?1:errlim/100)?'ok':'bad'}">${((perf.error_rate||0)*100).toFixed(2)}%</b></div>
+          <div class="cov-r"><span>Checks</span><b>${r.passed} passed${r.failed?` · ${r.failed} failed`:''}</b></div>
+        </div>
+      </div></div>`;
+
+    // ---- the thresholds this verdict was measured against, shown as a table not a claim ----
+    if(qg&&qg.checks&&qg.checks.length){
+      html += `<table class="covtable"><thead><tr><th>Measured</th>
+        <th class="num">Threshold</th><th class="num">Verdict</th></tr></thead><tbody>`
+        + qg.checks.map(c=>`<tr class="${c.ok?'good':'poor'}">
+            <td class="f">${escapeHtml(c.label||'')}</td>
+            <td class="num dim">${escapeHtml(c.threshold||'—')}</td>
+            <td class="num pc">${c.ok?'PASS':'FAIL'}${c.advisory?' <span class="dim">(advisory)</span>':''}</td></tr>`).join('')
+        + `</tbody></table>`;
+    }
+
+    // ---- per-pod resources: present only when the run sampled a real cluster ----
+    const pods=perf.pod_resources;
+    if(pods && pods.pods && pods.pods.length){
+      html += `<div class="cov-sec"><h4>Per-pod resources <span class="n">while the load ran</span></h4>
+        <table class="covtable"><thead><tr><th>Pod</th><th class="num">CPU</th><th class="num">Memory</th><th class="num">Restarts</th></tr></thead><tbody>`
+        + pods.pods.map(pd=>`<tr><td class="f">${escapeHtml(pd.name||'')}</td>
+            <td class="num dim">${escapeHtml(String(pd.cpu||'—'))}</td>
+            <td class="num dim">${escapeHtml(String(pd.memory||'—'))}</td>
+            <td class="num ${pd.restarts?'pc':'dim'}">${pd.restarts||0}</td></tr>`).join('')
+        + `</tbody></table></div>`;
+    }
+  }
+
+  // ---- Core Web Vitals: a separate discipline from throughput, so a separate section ----
+  const v=RUN.vitals;
+  if(v && v.checks && v.checks.length){
+    html += `<div class="cov-sec"><h4>Core Web Vitals <span class="n">${v.passed}/${v.total} within budget · lab measurement</span></h4>
+      <table class="covtable"><thead><tr><th>Metric</th><th class="num">Threshold</th><th class="num">Verdict</th></tr></thead><tbody>`
+      + v.checks.map(c=>`<tr class="${c.ok?'good':'poor'}"><td class="f">${escapeHtml(c.label||'')}</td>
+          <td class="num dim">${escapeHtml(c.threshold||'')}</td>
+          <td class="num pc">${c.ok?'PASS':'FAIL'}</td></tr>`).join('')
+      + `</tbody></table>`
+      + (v.note?`<div class="perf-note">${escapeHtml(v.note)}</div>`:'')
+      + `</div>`;
+  }
+  el.innerHTML=`<div class="cov-card">${html}</div>`;
+}
+
 // ===== The Ticket → Production journey: each SDLC stage, its agent, gate & artifacts =====
 const JOURNEY_STAGES = [
   {key:'req',      name:'Requirements',        ic:'🗺️', node:'generate_ac',            gate:null,       arts:[]},
   {key:'fcases',   name:'Functional Cases',    ic:'📋', node:'generate_functional_cases', gate:null,     arts:['functional']},
   {key:'build',    name:'Build',               ic:'🛠️', node:'generate_code',          gate:'UNIT',     arts:['code']},
+  {key:'deploy',   name:'Deploy',              ic:'🚀', node:'deploy_app',             gate:null,       arts:[]},
   {key:'unit',     name:'Unit Tests',          ic:'🧪', node:'run_unit_tests',         gate:'UNIT',     arts:['unit']},
   {key:'coverage', name:'Code Coverage',       ic:'📈', node:'go_coverage',            gate:'COVERAGE', arts:['coverage']},
   {key:'func',     name:'Functional · Playwright', ic:'🎭', node:'generate_ui_scripts', gate:'QG1',      arts:['playwright']},
@@ -1940,7 +2063,7 @@ const JOURNEY_STAGES = [
   {key:'ci',       name:'Jenkins CI',          ic:'🏗️', node:'run_jenkins',            gate:'JENKINS',  arts:[]},
   {key:'delivery', name:'Delivery → Production',ic:'🚀', node:'open_pr',                gate:null,       arts:[]},
 ];
-const AGENT_LABEL = {generate_ac:'Acceptance Criteria agent', generate_code:'Dev agent', run_unit_tests:'Unit Test agent', go_coverage:'Go Coverage agent', generate_go_tests:'Go Test Generation agent',
+const AGENT_LABEL = {generate_ac:'Acceptance Criteria agent', generate_code:'Dev agent', deploy_app:'Deploy agent', run_unit_tests:'Unit Test agent', go_coverage:'Go Coverage agent', generate_go_tests:'Go Test Generation agent',
   generate_ui_scripts:'Playwright agent', oracle_check:'Oracle Check (test-oracle auditor)', generate_perf_scripts:'Performance agent', select_regression:'Regression agent',
   generate_security_scan:'Security agent', generate_a11y:'Accessibility agent', generate_contract:'Contract agent',
   generate_functional_cases:'Functional Case agent', run_jenkins:'Jenkins CI agent', open_pr:'PR agent'};
@@ -1972,6 +2095,10 @@ function renderJourney(gateTries){
     let ev='';
     if(st.key==='req' && RUN.ac){ const n=(RUN.ac.criteria||RUN.ac.acceptance_criteria||[]).length||RUN.ac.length; ev=`Parsed acceptance criteria${n?` — ${n} criteria`:''} (source of truth).`; }
     if(st.key==='fcases' && RUN.fcases){ ev=`Derived ${RUN.fcases.length} functional test case(s) from the acceptance criteria — each automated case-wise.`; }
+    if(st.key==='deploy' && RUN.deployment){ const d=RUN.deployment;
+      ev = d.ok ? `Built and booted the repository on <code>${escapeHtml(d.url||'')}</code>`
+                  + `${d.strategy?` (${escapeHtml(d.strategy)})`:''} — every test in this run targeted that build, not a pre-existing environment.`
+                : `Deployment did not come up: ${escapeHtml(d.error||'unknown error')}`; }
     if(st.key==='sec' && RUN.security && RUN.security.ok){ const s=RUN.security.by_severity; ev=`Scanned ${RUN.security.files_scanned} files across ${(RUN.security.modules_scanned||[]).length} modules — ${RUN.security.total} findings (${s.high} high / ${s.medium} med / ${s.low} low).`; }
     if(st.key==='ci'){ const jl=_jenkinsLink(); if(jl) ev=`Jenkins ${jl.overall||jl.status} — ${jl.passed||0} passed, ${jl.failed||0} failed${jl.url?` · <a class="jlink" href="${jl.url}" target="_blank" rel="noopener">build ↗</a>`:''}`; }
     if(st.key==='delivery' && RUN.pr){ const u=RUN.pr.url; ev = (u&&u.startsWith('http'))?`<a class="jlink" href="${u}" target="_blank" rel="noopener">${escapeHtml((RUN.pr.repo||'')+(RUN.pr.number?(' #'+RUN.pr.number):''))} — open PR ↗</a>`:escapeHtml(u||'drafted'); }

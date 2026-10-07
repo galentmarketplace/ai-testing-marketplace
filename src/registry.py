@@ -314,9 +314,12 @@ def build_manifest() -> dict:
     for spec in REGISTRY:
         for d in spec.display:
             if d.parent and d.parent in col_index:         # nest runners/gates under their lane
+                # Carry the child's OWN tracks: QG1 is drawn under the Playwright lane but
+                # also judges a perf run, so a perf-only scope has to be able to find it.
                 col_index[d.parent]["children"].append(
                     {"id": d.id, "label": d.label, "icon": d.icon, "color": d.color,
-                     "cap": d.cap, "kind": d.kind})
+                     "cap": d.cap, "kind": d.kind, "tracks": list(spec.tracks),
+                     "agent": spec.id})
     route = {spec.id: [d.id for d in spec.display] for spec in REGISTRY}
     node_meta = {spec.id: {"label": spec.label, "kind": spec.kind,
                            "emits": spec.produces} for spec in REGISTRY}
