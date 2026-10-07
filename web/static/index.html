@@ -772,7 +772,7 @@
             <input type="checkbox" id="mock" checked />
             <label for="mock" style="margin:0">Mock mode (no API key / no cost)</label>
           </div>
-          <div class="hint">Uncheck for real LLM reasoning via the configured provider (currently <b>Groq · gpt-oss-20b</b>, free). Repo analysis &amp; test execution are always real when the target app is reachable.</div>
+          <div class="hint">Uncheck for real LLM reasoning via the configured provider (<b id="llmModel">loading…</b>). Repo analysis &amp; test execution are always real when the target app is reachable.</div>
           <details class="adv">
             <summary>Advanced</summary>
             <label for="failGate">Demo: force a gate to fail (once)</label>
@@ -1324,6 +1324,11 @@ function stepNode(d){
 }
 
 // ---- Sign-in methods this deployment offers (SSO appears only when an IdP is configured) ----
+fetch('/api/llm').then(r=>r.json()).then(d=>{
+  const el=$('llmModel'); if(!el) return;
+  el.textContent = d.model ? `${d.provider} · ${d.model}` : 'not configured';
+  if(!d.configured) el.textContent += ' — no API key set';
+}).catch(()=>{ const el=$('llmModel'); if(el) el.textContent='unknown'; });
 fetch('/api/auth/methods').then(r=>r.json()).then(m=>{
   if(m.sso && $('ssoLogin')){ $('ssoLogin').style.display=''; $('ssoLabel').textContent = m.sso_name || 'Single sign-on'; }
   if(!m.github && $('ghLogin')) $('ghLogin').style.display='none';

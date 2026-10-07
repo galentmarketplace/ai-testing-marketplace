@@ -716,6 +716,21 @@ def audit_list(limit: int = 200, request: Request = None, principal: dict = Depe
     return {"entries": store.list_audit(principal["login"], min(limit, 1000), admin=principal["admin"])}
 
 
+@app.get("/api/llm")
+def llm_info():
+    """Which provider/model this deployment actually uses.
+
+    The configure screen used to hard-code "Groq · gpt-oss-20b". After the move to Claude it
+    told every viewer the wrong model, which is a bad thing for a screen shown to customers.
+    """
+    provider = os.environ.get("LLM_PROVIDER", "anthropic").lower()
+    model = (os.environ.get("CLAUDE_MODEL", "claude-sonnet-5") if provider == "anthropic"
+             else os.environ.get("LLM_MODEL", ""))
+    return {"provider": provider, "model": model,
+            "configured": bool(os.environ.get("ANTHROPIC_API_KEY") if provider == "anthropic"
+                               else os.environ.get("GROQ_API_KEY"))}
+
+
 @app.get("/api/auth/methods")
 def auth_methods():
     """Which sign-in methods this deployment offers (drives the login screen)."""
