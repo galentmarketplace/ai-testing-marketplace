@@ -213,7 +213,7 @@ Narrate it in four beats, which is the order the screen shows:
 **Measured: 5 runs out of 5 identical.** 19 to 22 seconds for the coverage track, about
 35 with the pull request, and $0.033 to $0.041 a run.
 
-> **Leave pull request #3 open.** It contains this same fix. Merging it raises the
+> **Leave pull request #4 open.** It contains this same fix. Merging it raises the
 > repository to 96.4%, and then a live run correctly finds nothing to do and the whole
 > demonstration disappears. The gap in `go-orders-service` is the demo asset.
 
