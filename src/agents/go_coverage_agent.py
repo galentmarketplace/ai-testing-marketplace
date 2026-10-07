@@ -112,14 +112,21 @@ def coverage_gate(state: PipelineState) -> dict:
         tot = rep.get("total_pct_after", rep["total_pct"])   # verified post-generation number when available
         below = tot < min_pct
         prop = rep.get("proposed_tests") or {}
+        # Uncovered functions must come from the SAME measurement as the percentage. Mixing the
+        # post-fix percentage with the pre-fix function list made the gate read
+        # "96.4% — 4 uncovered function(s)" when those four were exactly the ones just covered.
+        after = rep.get("after") or {}
+        uncovered = (after.get("uncovered_funcs") if after.get("ok") else rep.get("uncovered_funcs")) or []
         verdict = "fail" if (below and blocking) else "pass"
+        moved = (f" (raised from {rep['total_pct']:.1f}% by {prop.get('proposed', 0)} generated test file(s))"
+                 if after.get("ok") else "")
         reason = (f"Coverage {tot:.1f}% vs {min_pct:.0f}% threshold — "
                   + ("BELOW" + (" (blocking)" if blocking else " (advisory — would block)") if below else "meets policy")
-                  + f"; {len(rep.get('uncovered_funcs', []))} uncovered function(s).")
+                  + moved + f"; {len(uncovered)} uncovered function(s) remaining.")
         checks = [
             {"label": f"statement coverage {tot:.1f}%", "threshold": f"≥ {min_pct:.0f}%", "ok": not below, "advisory": not blocking},
             {"label": "repo tests " + ("passed" if rep.get("tests_passed") else "FAILED"), "threshold": "green", "ok": bool(rep.get("tests_passed")), "advisory": True},
-            {"label": f"{len(rep.get('uncovered_funcs', []))} uncovered function(s)", "threshold": "review", "ok": True, "advisory": True},
+            {"label": f"{len(uncovered)} uncovered function(s) remaining", "threshold": "review", "ok": True, "advisory": True},
             {"label": "LCOV + Cobertura exported", "threshold": "standard formats", "ok": True},
         ]
         if prop:

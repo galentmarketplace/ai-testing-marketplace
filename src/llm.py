@@ -147,20 +147,62 @@ def call_llm(agent_name: str, system: str, user: str,
                      + ", ".join(_OPENAI_COMPAT))
 
 
+def _json_objects(text: str) -> list[dict]:
+    """Every complete top-level JSON object in the text, in order.
+
+    Taking everything between the first `{` and the last `}` fails the moment a model emits
+    anything after its answer — a second fenced block, a closing remark, a repeated object.
+    That produced `Extra data: line 3 column 1`, which discarded a perfectly good reply: the
+    Go test generator lost its tests on roughly one run in three and the coverage fix
+    silently did not happen.
+    """
+    dec = json.JSONDecoder()
+    out, i, n = [], 0, len(text)
+    while i < n:
+        i = text.find("{", i)
+        if i == -1:
+            break
+        try:
+            obj, end = dec.raw_decode(text, i)
+        except json.JSONDecodeError:
+            i += 1
+            continue
+        if isinstance(obj, dict):
+            out.append(obj)
+        i = max(end, i + 1)
+    return out
+
+
 def call_llm_json(agent_name: str, system: str, user: str,
                   max_tokens: int = DEFAULT_MAX_TOKENS) -> dict:
     """Call the LLM and parse a JSON object out of the response."""
     text = call_llm(agent_name, system, user, max_tokens=max_tokens)
-    match = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)  # strip code fences
-    if match:
-        text = match.group(1)
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end == -1:
+    fenced = re.findall(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
+    candidates = _json_objects("\n".join(fenced)) if fenced else []
+    if not candidates:
+        candidates = _json_objects(text)
+    # A top-level array where an object was asked for is a SHAPE error, not stray text.
+    # Lifting the first element out of it would hand the caller a plausible-looking dict
+    # that is missing the keys it needs.
+    body = ("\n".join(fenced) if fenced else text).strip()
+    if body.startswith("["):
+        try:
+            if isinstance(json.loads(body), list):
+                raise ValueError(f"[{agent_name}] the model returned a JSON array, "
+                                 f"not the requested object")
+        except json.JSONDecodeError:
+            pass
+    if candidates:
+        if len(candidates) > 1:
+            # Keep the richest object; a preamble or a sign-off is never the answer.
+            candidates.sort(key=lambda o: len(json.dumps(o)), reverse=True)
+            print(f"  [{agent_name}] the model returned {len(candidates)} JSON objects — "
+                  f"using the largest ({len(candidates[0])} key(s)) and ignoring the rest")
+        return candidates[0]
+    if "{" not in text:
         raise ValueError(f"[{agent_name}] No JSON object in LLM response:\n{text[:500]}")
-    try:
-        return json.loads(text[start:end + 1])
-    except json.JSONDecodeError as exc:
-        # An unterminated document almost always means the reply was cut off mid-write.
-        hint = (" — the response looks cut off, so the output budget is probably too small"
-                if not text.rstrip().endswith("}") else "")
-        raise ValueError(f"[{agent_name}] malformed JSON from the model{hint}: {exc}") from exc
+    # Nothing decoded: an unterminated document almost always means a cut-off reply.
+    hint = (" — the response looks cut off, so the output budget is probably too small"
+            if not text.rstrip().endswith("}") else "")
+    raise ValueError(f"[{agent_name}] malformed JSON from the model{hint}: "
+                     f"no complete object in {len(text)} chars")

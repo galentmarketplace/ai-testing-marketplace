@@ -14,12 +14,16 @@ from pathlib import Path
 
 from .. import runctx
 from ..integration import github, scaffold
+from ..integration import go_coverage as gocov
 from ..llm import call_llm_json
 from ..state import PipelineState
 
 SYSTEM = """You write pull request descriptions. Given the story/target, the generated tests,
 and the quality-gate results, draft a concise PR title and body: what the suite covers,
 which flows/endpoints, and the gate outcomes.
+The file list you are given is EXHAUSTIVE and is the diff. Describe those files and nothing
+else. Never state that no files were added, that no tests were needed, or that an existing
+suite already satisfies a threshold — you cannot see the repository, only this diff.
 Respond with ONLY a JSON object: {"title": "...", "body": "..."}"""
 
 # generated file suffix -> folder it lands in inside the destination repo
@@ -30,12 +34,91 @@ _DEST = {".spec.ts": "tests", ".spec.js": "tests", ".k6.js": "perf",
 _NEVER_COMMIT = {".xml", ".log", ".zip", ".png", ".webm"}
 
 
+def _all_files(state: PipelineState) -> list[str]:
+    """Every generated file this PR carries, across tracks — the drafter's only view of the diff."""
+    names = [Path(t["path"]).name for t in state.get("test_artifacts", [])
+             if Path(t["path"]).suffix not in _NEVER_COMMIT]
+    names += [a["repo_path"] for a in state.get("coverage_artifacts", []) if a.get("repo_path")]
+    names += [Path(a["path"]).name for a in (state.get("security_artifacts", [])
+                                             + state.get("a11y_artifacts", [])
+                                             + state.get("contract_artifacts", []))]
+    return names
+
+
+def _coverage_facts(state: PipelineState) -> dict | None:
+    """What a coverage run actually did, from the measurements — not from the model.
+
+    A model asked to describe a PR it cannot see will describe a plausible one. Live, it
+    wrote "No new test files were added as part of this PR" and "the existing test suite
+    already satisfies the required coverage threshold" onto a PR that added two test files
+    and raised coverage from 28.6% against an 80% threshold. Both statements were the exact
+    opposite of the diff. So for a coverage fix the narrative is built from the numbers.
+    """
+    rep = state.get("coverage_report") or {}
+    prop = rep.get("proposed_tests") or {}
+    tests = [a for a in state.get("coverage_artifacts", [])
+             if a.get("type") == "coverage-tests" and a.get("repo_path")]
+    if not rep.get("ok") or not prop.get("proposed") or not tests:
+        return None
+    after = rep.get("after") or {}
+    # Prefer measured over claimed here too — this body is read by a reviewer deciding whether
+    # to merge, and "covering 0 function(s)" on a PR that covered four is a false report.
+    covers = [f["func"] for f in gocov.functions_fixed(rep)] or (prop.get("covers") or [])
+    return {"before": rep.get("total_pct"),
+            "after": rep.get("total_pct_after", after.get("total_pct")),
+            "min_pct": rep.get("min_pct"),
+            "files": [a["repo_path"] for a in tests],
+            "covers": covers,
+            "skipped": prop.get("skipped") or [],
+            "verified": bool(prop.get("verified")),
+            "note": prop.get("note", ""),
+            "remaining": len((after.get("uncovered_funcs") if after.get("ok")
+                              else rep.get("uncovered_funcs")) or [])}
+
+
+def _coverage_draft(f: dict) -> dict:
+    before, after, floor = f["before"], f["after"], f["min_pct"]
+    n, funcs = len(f["files"]), f["covers"]
+    move = (f"{before:.1f}% → {after:.1f}%" if after is not None else f"{before:.1f}%")
+    title = (f"Raise test coverage {move}" if after is not None
+             else f"Add unit tests for {len(funcs)} uncovered function(s)")
+
+    body = ["## Summary", "",
+            f"Adds **{n} generated unit test file(s)** covering "
+            f"{len(funcs)} function(s) that had **0% coverage**.", ""]
+    if after is not None:
+        body += ["| | Before | After |", "|---|---|---|",
+                 f"| Statement coverage | {before:.1f}% | **{after:.1f}%** |"]
+        if floor:
+            body.append(f"| Threshold ({floor:.0f}%) | "
+                        + ("met" if before >= floor else "**not met**") + " | "
+                        + ("**met**" if after >= floor else "**still not met**") + " |")
+        body.append("")
+    if funcs:
+        body += ["### Functions now covered", ""] + [f"- `{c}`" for c in funcs] + [""]
+    body += ["### Files added", ""] + [f"- `{p}`" for p in f["files"]] + [""]
+    body += ["### Verification", "",
+             ("✅ `go test ./...` compiled and passed with these tests in place, and coverage "
+              "was re-measured afterwards — the figure above is measured, not projected."
+              if f["verified"] else
+              f"⚠️ Not execution-verified: {f['note']}")]
+    if f["skipped"]:
+        body += ["", "### Deliberately not tested", ""]
+        body += [f"- `{s.get('func')}` — {s.get('reason')}" for s in f["skipped"][:10]]
+    if f["remaining"]:
+        body += ["", f"{f['remaining']} function(s) remain uncovered — see `coverage-report.md`."]
+    return {"title": title, "body": "\n".join(body)}
+
+
 def _draft(state: PipelineState) -> dict:
+    facts = _coverage_facts(state)
+    if facts:
+        return _coverage_draft(facts)
     try:
         user = (f"Target: {state.get('story', {}).get('inputs', {})}\n"
                 f"AC: {state.get('acceptance_criteria', '(none)')}\n"
                 f"Gates: {[(g['gate'], g['verdict']) for g in state.get('gate_decisions', [])]}\n"
-                f"Test files: {[Path(t['path']).name for t in state.get('test_artifacts', [])]}")
+                f"Files in this PR (exhaustive): {_all_files(state)}")
         raw = call_llm_json("pr_agent", SYSTEM, user)
         return {"title": raw["title"], "body": raw["body"]}
     except Exception:
@@ -62,12 +145,22 @@ def _collect_files(state: PipelineState) -> tuple[dict, bool]:
             fx = p.parent / "fixtures.ts"
             if fx.is_file():
                 files[f"{folder}/fixtures.ts"] = fx.read_text()
+    # Generated Go tests: verified by compiling and running them in the clone, then never
+    # committed, so the coverage fix never reached a pull request. A Go test must keep its
+    # repo-relative path — beside the package it tests — not be flattened into tests/.
+    for art in state.get("coverage_artifacts", []):
+        rel = art.get("repo_path")
+        p = Path(art["path"])
+        if not rel or not p.is_file() or not rel.endswith("_test.go"):
+            continue
+        files[rel] = p.read_text()
     for art in (state.get("security_artifacts", []) + state.get("a11y_artifacts", [])
                 + state.get("contract_artifacts", [])):
         p = Path(art["path"])
         folder = next((v for suf, v in _DEST.items() if p.name.endswith(suf)), "scans")
         files[f"{folder}/{p.name}"] = p.read_text()
-    has_automation = any(a.get("type") == "playwright" for a in state.get("test_artifacts", []))
+    has_automation = (any(a.get("type") == "playwright" for a in state.get("test_artifacts", []))
+                      or any(a.get("type") == "coverage-tests" for a in state.get("coverage_artifacts", [])))
     return files, has_automation
 
 
@@ -119,13 +212,19 @@ def push_branch(state: PipelineState) -> dict:
     # Ensure the destination has a runnable Playwright framework (package.json, config, pages,
     # fixtures) — scaffold it when missing so Jenkins' `npm install` / `npx playwright test` works.
     # If the repo already has a framework, we reuse it (the UI agent scans + builds on top).
-    need_framework = True
-    if not new_repo:
-        try:
-            fw = github.scan_framework(dest)
-            need_framework = not (fw.get("ok") and fw.get("has_framework"))
-        except Exception:
-            need_framework = True
+    # Only scaffold a Playwright framework when this run actually produced Playwright specs.
+    # Keying off "the destination has no framework" scaffolded package.json, playwright.config.ts
+    # and page objects into a GO repository whose pull request contained one generated Go test.
+    wants_playwright = any(a.get("type") == "playwright" for a in state.get("test_artifacts", []))
+    need_framework = False
+    if wants_playwright:
+        need_framework = True
+        if not new_repo:
+            try:
+                fw = github.scan_framework(dest)
+                need_framework = not (fw.get("ok") and fw.get("has_framework"))
+            except Exception:
+                need_framework = True
     if need_framework:
         files.update(scaffold.playwright_framework(
             base_url=inp.get("base_url", ""), app_name=inp.get("source_repo", dest)))

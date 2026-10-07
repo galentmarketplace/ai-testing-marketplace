@@ -31,22 +31,6 @@ network blip or a SauceDemo hiccup is outside our control.
 Do not weaken the gate threshold to make a demo pass. That is the one change that would
 undermine everything the demo is about.
 
----|---|
-| Passed | 5 of 9 |
-| Blocked | 4 of 9 (two were bugs since fixed, so call it 2 in 7 today) |
-| Duration | 111s to 529s |
-| Attempts before passing | 1 to 4 |
-| Cost | $0.17 to $0.80 |
-| Cases derived from the identical ticket | 9 to 14 |
-
-So the plan is: **walk through a completed run as the main event**, and optionally start a
-live one at the beginning to return to at the end. If the live one is green, it is a bonus.
-If it blocks, you have already shown the real thing and the truthful line is available to
-you: it blocked rather than reporting a false pass, which is the behaviour we want.
-
-Do not weaken the gate threshold to make a demo pass. That is the one change that would
-undermine everything the demo is about.
-
 ---
 
 ## Thirty minutes before
@@ -207,15 +191,44 @@ convergence is the main engineering work remaining.
 
 Each verified live on 7 October. Pick a playbook, paste the inputs, untick **Mock mode**.
 
-## Go code coverage — ~100s
+## Go code coverage — the fix, not just the number — ~35s with the PR
 
-Playbook **Go Code Coverage**. Repository `https://github.com/gorilla/mux`, minimum coverage `85`.
+This is the strongest of the four, because it does not stop at reporting a gap. It finds the
+uncovered functions, reads their real source, writes tests, **compiles and runs them**, and
+re-measures. Only then does it raise a pull request.
 
-Result: 90.7% on 652 of 719 statements, COVERAGE gate pass, 7 uncovered functions each at an
-exact source line, LCOV and Cobertura exported.
+Playbook **Go Code Coverage** with the **delivery** track on. Repository
+`https://github.com/galentmarketplace/go-orders-service`, destination the same repository,
+minimum coverage `80`.
 
-**The point to make:** it also reports that coverage only covers 80% of the source files, so
-the effective figure is 72.6%. A tool reporting 90.7% alone is flattering you.
+Narrate it in four beats, which is the order the screen shows:
+
+| Beat | What appears |
+|---|---|
+| The gap | `28.6% of statements (8/28), 4 uncovered function(s) · threshold 80%` — and the report names each one at its exact line: `Count`, `Remove`, `BulkDiscount`, `LoyaltyPoints` |
+| The fix | 2 test files written against the real signatures, table-driven |
+| The proof | `go test ./...` compiled and passed, then coverage was **re-measured** — `28.6% → 96.4%` |
+| The delivery | A pull request whose title is `Raise test coverage 28.6% → 96.4%`, listing the functions now covered and stating the figure was measured, not projected |
+
+**Measured: 5 runs out of 5 identical.** 19 to 22 seconds for the coverage track, about
+35 with the pull request, and $0.033 to $0.041 a run.
+
+> **Leave pull request #3 open.** It contains this same fix. Merging it raises the
+> repository to 96.4%, and then a live run correctly finds nothing to do and the whole
+> demonstration disappears. The gap in `go-orders-service` is the demo asset.
+
+**The point to make:** every number on that pull request came from a measurement taken after
+the tests ran, not from the model's description of its own work. Ask the room how they would
+know otherwise — that is the whole argument. Open `coverage-report.md` and show the
+before/after table next to the diff.
+
+Two secondary points if there is appetite:
+
+* the report also tells you what it did **not** fix — functions it declined to test, with the
+  reason, rather than quietly leaving them out
+* on a larger repository (`gorilla/mux`: 90.7%) it also reports that coverage instruments only
+  80% of the source files, so the effective figure is 72.6%. A tool reporting 90.7% alone is
+  flattering you
 
 ## Unit tests — ~6s
 

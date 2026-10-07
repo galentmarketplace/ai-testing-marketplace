@@ -23,7 +23,19 @@ _CRUD = [("POST", "create"), ("GET", "read/:id"), ("PATCH", "update/:id"),
 
 
 def _ensure_local(source: str) -> Path:
-    """Accept a local path or a git URL. Clones URLs (shallow) into repos/<name>."""
+    """Accept a local path or a git URL. Clones URLs (shallow) into repos/<name>.
+
+    An EXISTING clone is reset to a pristine copy of the remote before it is handed back.
+    Without that, measurement runs against a tree we polluted ourselves: the Go test
+    generator writes its proposals into the clone to compile them, and a clone that kept
+    them reported 96.4% on the NEXT run — so the run found nothing to fix, raised no pull
+    request, and reported a repository state that did not exist on any branch. A stale
+    clone is the same class of error in slow motion: it analyses a commit the team has
+    moved past.
+
+    Only paths under repos/ are reset — they are ours. A local path the user pointed at is
+    returned untouched; hard-resetting someone's working tree would destroy their work.
+    """
     if source and (source.startswith("http") or source.startswith("git@")):
         slug = re.sub(r"[^a-zA-Z0-9_.-]", "-", source.rstrip("/").split("/")[-1].replace(".git", ""))
         dest = REPOS_DIR / slug
@@ -31,8 +43,32 @@ def _ensure_local(source: str) -> Path:
             REPOS_DIR.mkdir(parents=True, exist_ok=True)
             subprocess.run(["git", "clone", "--depth", "1", source, str(dest)],
                            check=True, capture_output=True, timeout=300, env=sandbox.child_env())
+            return dest
+        _refresh_clone(dest)
         return dest
     return Path(source)
+
+
+def _refresh_clone(dest: Path) -> None:
+    """Discard local residue and fast-forward to the remote head. Never fails a run."""
+    def git(*args, timeout=300):
+        return subprocess.run(["git", "-C", str(dest), *args], capture_output=True,
+                              text=True, timeout=timeout, env=sandbox.child_env())
+    try:
+        head = git("symbolic-ref", "--short", "refs/remotes/origin/HEAD").stdout.strip()
+        ref = head.split("/", 1)[1] if "/" in head else "HEAD"
+        fetched = git("fetch", "--depth", "1", "origin", ref).returncode == 0
+        if fetched:
+            git("reset", "--hard", "FETCH_HEAD")
+        # Untracked files are the residue: generated tests placed here for verification.
+        # Ignored files (coverage.out, node_modules) are left alone — removing them only
+        # costs a re-download.
+        git("clean", "-fd")
+        if not fetched:
+            print(f"  [Repo] could not fetch {dest.name} — analysing the cached checkout "
+                  f"at {git('rev-parse', '--short', 'HEAD').stdout.strip()}")
+    except Exception as exc:
+        print(f"  [Repo] could not refresh {dest.name} ({exc}) — using the existing checkout")
 
 
 def _detect_stack(root: Path) -> str:
