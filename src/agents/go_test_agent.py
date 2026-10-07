@@ -177,7 +177,7 @@ def generate_go_tests(state: PipelineState) -> dict:
                      "tags": ["@coverage", "@generated-test"], "covers": f.get("covers", [])})
 
     # EXECUTION-IN-THE-LOOP: verify in OUR clone, withdraw anything red, re-measure.
-    verified, after, note = False, None, ""
+    verified, after, note, after_lines = False, None, "", None
     if not mock and files and shutil.which("go") and root and root.exists():
         placed = []
         for f in files:
@@ -196,7 +196,10 @@ def generate_go_tests(state: PipelineState) -> dict:
             # state made a run that raised coverage read exactly like one that failed to.
             if rep2.get("ok"):
                 rep["after"] = {k: v for k, v in rep2.items() if k != "lines"}
-                rep["after_lines"] = rep2.get("lines")
+                # The per-line hit map stays LOCAL: it is only needed to re-export LCOV and
+                # Cobertura. It rides in the run state otherwise, which ships a line-by-line
+                # map of the whole repository to every browser watching the stream.
+                after_lines = rep2.get("lines")
             note = "compiled & passed in the cloned repo; coverage re-measured"
         else:
             note = "withdrawn — generated tests did not compile/pass: " + (t.stderr or t.stdout or "")[-400:].strip()
@@ -220,13 +223,14 @@ def generate_go_tests(state: PipelineState) -> dict:
     rep["proposed_tests"] = summary
     if verified and after is not None:
         rep["total_pct_after"] = after
-    arts = _rewrite_artifacts(state, rep, arts)
+    arts = _rewrite_artifacts(state, rep, arts, after_lines)
     print(f"  [Go Test Gen] proposed {len(files)} test file(s) for {len(summary['covers'])} function(s), "
           f"skipped {len(skipped)} · {note}" + (f" · coverage {rep.get('total_pct')}% → {after}%" if after is not None else ""))
     return {"coverage_artifacts": arts, "coverage_report": rep, "go_test_proposals": summary}
 
 
-def _rewrite_artifacts(state: PipelineState, rep: dict, arts: list[dict]) -> list[dict]:
+def _rewrite_artifacts(state: PipelineState, rep: dict, arts: list[dict],
+                       after_lines: dict | None = None) -> list[dict]:
     """Re-emit the coverage artifacts now that the gap has been closed.
 
     The coverage step writes its report BEFORE this agent runs, so the artifact a reviewer
@@ -240,15 +244,14 @@ def _rewrite_artifacts(state: PipelineState, rep: dict, arts: list[dict]) -> lis
     repo = inp.get("source_repo") or inp.get("repo") or "repo"
     min_pct = rep.get("min_pct") or 80.0
     by_type = {a.get("type"): a.get("path") for a in arts}
-    cov = {"lines": rep.get("after_lines") or {}, "total_pct": after["total_pct"]}
+    cov = {"lines": after_lines or {}, "total_pct": after["total_pct"]}
     written = []
     try:
         if by_type.get("coverage-report"):
             Path(by_type["coverage-report"]).write_text(gocov.report_markdown(rep, repo, min_pct))
             written.append("coverage-report.md")
         if by_type.get("coverage-json"):
-            Path(by_type["coverage-json"]).write_text(json.dumps(
-                {k: v for k, v in rep.items() if k != "after_lines"}, indent=2, default=str))
+            Path(by_type["coverage-json"]).write_text(json.dumps(rep, indent=2, default=str))
             written.append("coverage.json")
         if cov["lines"] and by_type.get("coverage-lcov"):
             Path(by_type["coverage-lcov"]).write_text(reports.lcov(cov))

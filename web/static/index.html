@@ -366,6 +366,77 @@
   .src-row > b { font-family:var(--mono,monospace); font-size:12px; text-align:right; word-break:break-all; }
   .src-row > b.src-hi { color:var(--ok); }
   /* ===== SDLC journey timeline (results hero) ===== */
+  /* ---- Code coverage report (standard coverage-report conventions) ---- */
+  .cov-head { display:flex; align-items:baseline; gap:12px; margin:26px 0 14px; flex-wrap:wrap; }
+  .cov-head h3 { margin:0; font-size:15px; }
+  .cov-card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:18px; }
+  .cov-top { display:flex; gap:22px; align-items:center; flex-wrap:wrap; margin-bottom:18px; }
+  .cov-score { flex:0 0 auto; min-width:150px; padding:14px 18px; border-radius:10px;
+               background:var(--panel2); border-left:4px solid var(--muted); }
+  .cov-score.good { border-left-color:var(--ok); }
+  .cov-score.part { border-left-color:var(--warn); }
+  .cov-score.poor { border-left-color:var(--fail); }
+  .cov-pct { font-family:var(--font-mono); font-size:38px; font-weight:700; line-height:1;
+             font-variant-numeric:tabular-nums; }
+  .cov-pct small { font-size:18px; font-weight:500; color:var(--muted); margin-left:2px; }
+  .cov-score.good .cov-pct { color:var(--ok); }
+  .cov-score.part .cov-pct { color:var(--warn); }
+  .cov-score.poor .cov-pct { color:var(--fail); }
+  .cov-lbl { font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); margin-top:6px; }
+  .cov-facts { flex:1 1 320px; min-width:260px; }
+  .cov-move { display:flex; align-items:center; gap:10px; font-family:var(--font-mono);
+              font-size:18px; font-variant-numeric:tabular-nums; margin-bottom:12px; flex-wrap:wrap; }
+  .cov-move .was { color:var(--muted); text-decoration:line-through; }
+  .cov-move .arr { color:var(--muted); }
+  .cov-move .now { color:var(--ok); font-weight:700; }
+  .cov-move .delta { font-size:12px; padding:2px 8px; border-radius:999px;
+                     background:rgba(34,197,94,.14); color:var(--ok); border:1px solid rgba(34,197,94,.35); }
+  .cov-rows { display:grid; grid-template-columns:repeat(auto-fit,minmax(235px,1fr)); gap:4px 26px; }
+  .cov-r { display:flex; justify-content:space-between; gap:10px; font-size:12.5px;
+           padding:6px 0; border-bottom:1px solid var(--border); }
+  .cov-r span { color:var(--muted); }
+  .cov-r b { font-family:var(--font-mono); font-variant-numeric:tabular-nums; }
+  .cov-r b.ok { color:var(--ok); } .cov-r b.bad { color:var(--fail); } .cov-r b.warn { color:var(--warn); }
+  .covtable { width:100%; border-collapse:collapse; font-size:12.5px; }
+  .covtable th { text-align:left; font-size:10.5px; letter-spacing:.07em; text-transform:uppercase;
+                 color:var(--muted); font-weight:600; padding:8px 10px; border-bottom:1px solid var(--border); }
+  .covtable th.num, .covtable td.num { text-align:right; }
+  .covtable td { padding:8px 10px; border-bottom:1px solid rgba(71,85,105,.35); }
+  .covtable tbody tr:hover { background:rgba(39,52,73,.55); }
+  .covtable td.f, .covtable td.fn { font-family:var(--font-mono); font-size:12px; word-break:break-all; }
+  .covtable td.fn { font-weight:600; }
+  .covtable td.pc { font-family:var(--font-mono); font-weight:700; font-variant-numeric:tabular-nums; }
+  .covtable td.dim { color:var(--muted); font-family:var(--font-mono); font-variant-numeric:tabular-nums; }
+  .covtable tr.good td.pc { color:var(--ok); }
+  .covtable tr.part td.pc { color:var(--warn); }
+  .covtable tr.poor td.pc { color:var(--fail); }
+  .covtable td.bar { width:34%; min-width:120px; }
+  .covbar { display:block; height:8px; border-radius:999px; background:var(--panel2); overflow:hidden; }
+  .covbar > span { display:block; height:100%; border-radius:999px; background:var(--muted); }
+  .covbar.good > span { background:var(--ok); }
+  .covbar.part > span { background:var(--warn); }
+  .covbar.poor > span { background:var(--fail); }
+  .cov-sec { margin-top:20px; }
+  .cov-sec h4 { margin:0 0 10px; font-size:13px; display:flex; align-items:baseline; gap:8px; }
+  .cov-sec h4 .n { font-weight:400; font-size:11.5px; color:var(--muted); font-family:var(--font-mono); }
+  .cov-unc { display:flex; flex-wrap:wrap; gap:8px; }
+  .uncf { display:inline-flex; flex-direction:column; gap:2px; padding:6px 10px; border-radius:8px;
+          background:rgba(239,68,68,.08); border:1px solid rgba(239,68,68,.3);
+          font-family:var(--font-mono); font-size:12px; color:var(--text); }
+  .uncf .loc { font-size:10.5px; color:var(--muted); }
+  .cov-allgreen { padding:10px 12px; border-radius:8px; background:rgba(34,197,94,.1);
+                  border:1px solid rgba(34,197,94,.3); color:var(--ok); font-size:12.5px; }
+  .cov-allgreen code { font-family:var(--font-mono); font-size:11.5px; }
+  .cov-warn { padding:10px 12px; border-radius:8px; background:rgba(210,153,34,.1);
+              border:1px solid rgba(210,153,34,.35); color:var(--warn); font-size:12.5px; line-height:1.5; }
+  .cov-none { color:var(--muted); font-size:13px; }
+  .cov-skips { margin:0; padding-left:18px; font-size:12.5px; color:var(--muted); line-height:1.6; }
+  .cov-skips b { color:var(--text); font-family:var(--font-mono); font-size:12px; }
+  @media (max-width:760px){
+    .cov-top { gap:14px; }
+    .covtable td.bar, .covtable th:nth-child(3) { display:none; }
+    .covtable td.f { max-width:46vw; }
+  }
   .journey-head { display:flex; align-items:baseline; gap:12px; margin:26px 0 14px; flex-wrap:wrap; }
   .journey-head h3 { margin:0; font-size:15px; }
   .journey-sub { font-size:11.5px; color:var(--muted); }
@@ -883,6 +954,10 @@
     <div class="kpis" id="kpis"></div>
     <div class="result-links" id="resultLinks" style="display:none"></div>
 
+    <div class="cov-head" id="covHead" style="display:none"><h3>Code coverage</h3>
+      <span class="journey-sub">measured by running the repository's own tests, before and after this run</span></div>
+    <div class="covreport" id="covReport" style="display:none"></div>
+
     <div class="sources-head" id="sourcesHead" style="display:none"><h3>Sources of truth</h3>
       <span class="journey-sub">what this run was driven &amp; validated against — nothing assumed</span></div>
     <div class="sources" id="sources" style="display:none"></div>
@@ -1295,6 +1370,9 @@ function stepNode(d){
   if(u.unit_artifacts) _pushArts(u.unit_artifacts);          // unit test report
   if(u.a11y_artifacts) _pushArts(u.a11y_artifacts);
   if(u.contract_artifacts) _pushArts(u.contract_artifacts);
+  // Coverage artifacts were never pushed, so a coverage run's report, LCOV and Cobertura
+  // existed on disk with no way to reach them from the Results screen.
+  if(u.coverage_artifacts) _pushArts(u.coverage_artifacts);
   if(u.run_results) renderRuns(u.run_results);
   if(u.gate_decisions) renderGates(u.gate_decisions);
   if(u.pr) renderPR(u.pr);
@@ -1569,6 +1647,7 @@ function accumulate(d){ const u=d.update||{};
   if(u.acceptance_criteria) RUN.ac=u.acceptance_criteria;
   if(u.functional_cases) RUN.fcases=u.functional_cases;   // functional test cases derived from AC
   if(u.heal_notes) RUN.heal=u.heal_notes;                 // self-heal repair log (for the failure detail)
+  if(u.coverage_report) RUN.coverage=u.coverage_report;   // statement coverage, per file + per function
 }
 // The most relevant Jenkins build link (the final/last run) + its status.
 function _jenkinsLink(){
@@ -1605,7 +1684,12 @@ function renderResults(){
     <div class="meta">${RUN.mock?'mock run':'live Claude'}<br>${secs}s</div>`;
   const tiles=[
     {v:`${gPass}/${gTot||0}`, k:'Gates passed', sub:'final verdicts'},
-    {v: tTot?`${Math.round(tPass/tTot*100)}%`:'—', k:'Tests passed', sub:`${tPass}/${tTot} cases · final`},
+    // On a coverage run there are no cases to count, so "Tests passed —" is dead space:
+    // show the figure that run actually produced.
+    (!tTot && RUN.coverage && RUN.coverage.ok)
+      ? {v:`${(((RUN.coverage.after&&RUN.coverage.after.ok)?RUN.coverage.after.total_pct:RUN.coverage.total_pct)||0).toFixed(1)}%`,
+         k:'Coverage', sub: (RUN.coverage.after&&RUN.coverage.after.ok)?`up from ${RUN.coverage.total_pct.toFixed(1)}%`:'statements'}
+      : {v: tTot?`${Math.round(tPass/tTot*100)}%`:'—', k:'Tests passed', sub:`${tPass}/${tTot} cases · final`},
     {v:RUN.agents.size, k:'Agents run'},
     {v:cycles, k:'Self-corrections', sub:cycles?'gate fix-loops':'clean run'},
     {v:secs+'s', k:'Duration'},
@@ -1639,6 +1723,7 @@ function renderResults(){
   }).join('') : '<div class="empty">No gates in scope.</div>');
   $('rRuns').innerHTML = runs.length? runs.map(r=>{const total=r.passed+r.failed,ok=r.failed===0,perf=r.perf?` · p95 ${r.perf.p95_ms}ms · err ${(r.perf.error_rate*100).toFixed(1)}%`:'',it=runTries[r.suite]>1?` <span class="m">· iteration ${runTries[r.suite]}</span>`:'';return `<div class="run"><span><b>${r.suite}</b>${it}</span><span class="rate" style="color:${ok?'var(--ok)':'var(--fail)'}">${r.passed}/${total} passed<span class="m">${perf}</span></span></div>`;}).join('') : '<div class="empty">No test runs.</div>';
   renderSources();            // what came in from each source of truth (Jira / dev repo / app)
+  renderCoverage();           // the coverage report: total, per file, per function, before → after
   renderJourney(gateTries);   // the Ticket → Production journey (agent-wise, artifacts per stage)
   // ---- Quick links bar: the PR + the Jenkins run, front-and-centre ----
   const jl=_jenkinsLink();
@@ -1719,6 +1804,98 @@ function renderSources(){
   head.style.display='flex'; el.style.display='grid'; el.innerHTML=cards.join('');
 }
 
+// ===== Code coverage report: the standard coverage view (total, per file, per function) =====
+// Tiers follow the convention every coverage tool uses, so the colour means the same thing
+// here as in nyc, JaCoCo or Codecov: >=80 good, 50-79 partial, <50 poor.
+function _covTier(pct){ return pct>=80?'good':(pct>=50?'part':'poor'); }
+function _covBar(pct){
+  const t=_covTier(pct);
+  return `<span class="covbar ${t}"><span style="width:${Math.max(0,Math.min(100,pct)).toFixed(1)}%"></span></span>`;
+}
+function _shortPath(f){
+  // Coverage paths are module-qualified (github.com/org/repo/internal/x.go) — the module
+  // prefix is the same on every row, so it is noise. Keep what tells the rows apart.
+  const s=String(f||'');
+  const m=s.match(/^[^/]+\.[^/]+\/[^/]+\/[^/]+\/(.+)$/);   // host/org/repo/<rest>
+  return m?m[1]:s;
+}
+function renderCoverage(){
+  const head=$('covHead'), el=$('covReport'); if(!el) return;
+  const rep=RUN.coverage;
+  if(!rep || !rep.ok){
+    el.style.display='none'; if(head) head.style.display='none';
+    // A coverage run that could not measure says why, rather than showing nothing at all.
+    if(rep && rep.error){ el.style.display='block'; if(head) head.style.display='flex';
+      el.innerHTML=`<div class="cov-card"><div class="cov-none">Coverage was not measured — ${escapeHtml(rep.error)}</div></div>`; }
+    return;
+  }
+  el.style.display='block'; if(head) head.style.display='flex';
+
+  const after=rep.after && rep.after.ok ? rep.after : null;
+  const fin=after||rep;
+  const before=rep.total_pct, total=fin.total_pct;
+  const floor=rep.min_pct, met=floor==null||total>=floor;
+  const prop=rep.proposed_tests||null;
+
+  // ---- headline: the number, and the move if this run made one ----
+  const delta=after?(total-before):null;
+  const headline=`<div class="cov-top">
+      <div class="cov-score ${_covTier(total)}">
+        <div class="cov-pct">${total.toFixed(1)}<small>%</small></div>
+        <div class="cov-lbl">statements covered</div>
+      </div>
+      <div class="cov-facts">
+        ${after?`<div class="cov-move"><span class="was">${before.toFixed(1)}%</span><span class="arr">→</span><span class="now">${total.toFixed(1)}%</span><span class="delta up">+${delta.toFixed(1)} pts</span></div>`:''}
+        <div class="cov-rows">
+          <div class="cov-r"><span>Statements</span><b>${fin.statements_covered}/${fin.statements}</b></div>
+          ${floor!=null?`<div class="cov-r"><span>Threshold</span><b class="${met?'ok':'bad'}">${floor.toFixed(0)}% · ${met?'met':'not met'}</b></div>`:''}
+          <div class="cov-r"><span>Repo tests</span><b class="${fin.tests_passed?'ok':'bad'}">${fin.tests_passed?'passed':'failed'}</b></div>
+          ${prop&&prop.proposed?`<div class="cov-r"><span>Tests generated</span><b class="${prop.verified?'ok':'warn'}">${prop.proposed} file(s) · ${prop.verified?'verified':'unverified'}</b></div>`:''}
+        </div>
+      </div></div>`;
+
+  // ---- per file, worst first: the table every coverage report opens with ----
+  const files=(fin.files||[]).slice().sort((a,b)=>a.pct-b.pct);
+  const fileTable=files.length?`<table class="covtable"><thead><tr>
+      <th>File</th><th class="num">% Stmts</th><th>Coverage</th><th class="num">Lines</th></tr></thead><tbody>
+    ${files.map(f=>`<tr class="${_covTier(f.pct)}">
+      <td class="f" title="${escapeHtml(f.file)}">${escapeHtml(_shortPath(f.file))}</td>
+      <td class="num pc">${f.pct.toFixed(1)}%</td>
+      <td class="bar">${_covBar(f.pct)}</td>
+      <td class="num dim">${f.covered}/${f.lines}</td></tr>`).join('')}
+    </tbody></table>`:'';
+
+  // ---- what this run fixed: 0% -> covered, from the measurement ----
+  const fixedFns=(()=>{
+    if(!after) return [];
+    const byName={}; (after.funcs||[]).forEach(fn=>{ byName[fn.func+'|'+String(fn.file).split('/').pop()]=fn.pct; });
+    return (rep.uncovered_funcs||[]).map(u=>({...u, now: byName[u.func+'|'+String(u.file).split('/').pop()]}))
+                                    .filter(u=>u.now>0);
+  })();
+  const fixedTable=fixedFns.length?`<div class="cov-sec"><h4>Covered by this run <span class="n">${fixedFns.length} function(s)</span></h4>
+    <table class="covtable fns"><thead><tr><th>Function</th><th>Source</th><th class="num">Before</th><th class="num">After</th></tr></thead><tbody>
+    ${fixedFns.map(u=>`<tr class="good"><td class="fn">${escapeHtml(u.func)}</td>
+      <td class="f" title="${escapeHtml(u.file)}">${escapeHtml(_shortPath(u.file))}:${u.line}</td>
+      <td class="num dim">0.0%</td><td class="num pc">${u.now.toFixed(1)}%</td></tr>`).join('')}
+    </tbody></table></div>`:'';
+
+  // ---- what is still not covered: the half a flattering report leaves out ----
+  const rest=fin.uncovered_funcs||[];
+  const restSec=rest.length?`<div class="cov-sec"><h4>Still uncovered <span class="n">${rest.length} function(s)</span></h4>
+    <div class="cov-unc">${rest.slice(0,30).map(u=>`<span class="uncf">${escapeHtml(u.func)}<span class="loc">${escapeHtml(_shortPath(u.file))}:${u.line}</span></span>`).join('')}</div></div>`
+    : (after?`<div class="cov-sec"><div class="cov-allgreen">✓ Every function reported by <code>go tool cover -func</code> now has coverage.</div></div>`:'');
+
+  // ---- declined, with the reason: a skip must be visible, never silent ----
+  const skipped=(prop&&prop.skipped)||[];
+  const skipSec=skipped.length?`<div class="cov-sec"><h4>Not tested <span class="n">${skipped.length}</span></h4>
+    <ul class="cov-skips">${skipped.slice(0,10).map(k=>`<li><b>${escapeHtml(k.func||'')}</b> — ${escapeHtml(k.reason||'')}</li>`).join('')}</ul></div>`:'';
+  const failSec=(prop&&!prop.proposed)?`<div class="cov-sec"><div class="cov-warn">⚠ Test generation was attempted and produced nothing usable — ${escapeHtml(prop.note||'')}. This is a failed attempt, not a decision that the gap is acceptable.</div></div>`:'';
+
+  // The artifact chips are NOT repeated here: the Code Coverage journey stage lists them
+  // immediately below, and one screen showing the same four files twice reads as a bug.
+  el.innerHTML=`<div class="cov-card">${headline}${fileTable}${fixedTable}${failSec}${restSec}${skipSec}</div>`;
+}
+
 // ===== The Ticket → Production journey: each SDLC stage, its agent, gate & artifacts =====
 const JOURNEY_STAGES = [
   {key:'req',      name:'Requirements',        ic:'🗺️', node:'generate_ac',            gate:null,       arts:[]},
@@ -1773,7 +1950,11 @@ function renderJourney(gateTries){
     if(!ev && gd) ev=escapeHtml(gd.reason||'');
 
     const checks = gd && gd.checks ? gd.checks.map(c=>`<span class="jcheck ${c.ok?'ok':'bad'}">${c.ok?'✓':'✗'} ${escapeHtml(c.label)}</span>`).join('') : '';
-    const artsHtml = arts.length ? `<div class="jarts"><div class="jarts-t">Artifacts by ${escapeHtml(AGENT_LABEL[st.node]||'agent')}</div>`
+    // Two agents contribute to the coverage stage: the measurement and the test generator.
+    // Crediting the generated tests to the Go Coverage agent is simply wrong.
+    const alsoGen = st.key==='coverage' && arts.some(a=>(a.type||'')==='coverage-tests');
+    const byLine = (AGENT_LABEL[st.node]||'agent') + (alsoGen?' + Go Test Generation agent':'');
+    const artsHtml = arts.length ? `<div class="jarts"><div class="jarts-t">Artifacts by ${escapeHtml(byLine)}</div>`
       + arts.map(a=>`<span class="jart" onclick='viewArtifact(${JSON.stringify(a.path)})'>${escapeHtml(a.path.split('/').pop())}<span class="jx">${escapeHtml(a.type||'')}</span></span>`).join('') + `</div>` : '';
 
     rows.push(`<div class="jstage ${status}"><div class="jdot"></div><div class="jcard">
