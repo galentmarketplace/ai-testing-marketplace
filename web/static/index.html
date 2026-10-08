@@ -425,6 +425,20 @@
   .perf-src.warn { color:var(--warn); background:rgba(210,153,34,.12); border-color:rgba(210,153,34,.35); }
   .perf-note { margin-top:8px; font-size:11.5px; color:var(--muted); }
   .covtable td .dim, .covtable td.num .dim { color:var(--muted); font-size:11px; }
+  .sev-bar { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
+  .sev-chip { font-size:11px; padding:3px 9px; border-radius:999px; border:1px solid var(--border);
+              background:var(--panel2); font-family:var(--font-mono); text-transform:lowercase; }
+  .sev-chip b { font-weight:700; }
+  .sev-chip.critical { color:#ff8585; border-color:rgba(239,68,68,.55); background:rgba(239,68,68,.16); }
+  .sev-chip.high     { color:var(--fail); border-color:rgba(239,68,68,.35); background:rgba(239,68,68,.09); }
+  .sev-chip.medium   { color:var(--warn); border-color:rgba(210,153,34,.35); background:rgba(210,153,34,.1); }
+  .sev-chip.low      { color:var(--teal); border-color:rgba(57,197,207,.3); background:rgba(57,197,207,.08); }
+  .sev-chip.info     { color:var(--muted); }
+  .sev-chip.zero     { color:var(--muted); background:transparent; border-style:dashed; }
+  .covtable tr.subrow td { padding-top:0; border-bottom:1px solid rgba(71,85,105,.35); }
+  .covtable td.why { font-size:11.5px; color:var(--muted); }
+  .covtable td.why code { font-family:var(--font-mono); font-size:11px; background:var(--panel2);
+                          padding:1px 6px; border-radius:5px; }
   .cov-sec { margin-top:20px; }
   .cov-sec h4 { margin:0 0 10px; font-size:13px; display:flex; align-items:baseline; gap:8px; }
   .cov-sec h4 .n { font-weight:400; font-size:11.5px; color:var(--muted); font-family:var(--font-mono); }
@@ -973,6 +987,10 @@
       <span class="journey-sub">what was load-tested, at what offered rate, and against which thresholds</span></div>
     <div class="covreport" id="perfReport" style="display:none"></div>
 
+    <div class="cov-head" id="secHead" style="display:none"><h3>Security</h3>
+      <span class="journey-sub">which disciplines ran, what they found, and which could not run at all</span></div>
+    <div class="covreport" id="secReport" style="display:none"></div>
+
     <div class="sources-head" id="sourcesHead" style="display:none"><h3>Sources of truth</h3>
       <span class="journey-sub">what this run was driven &amp; validated against — nothing assumed</span></div>
     <div class="sources" id="sources" style="display:none"></div>
@@ -1483,8 +1501,8 @@ const FLOWS=[
    p:'Build and boot the app on an ephemeral URL, discover its real routes from the code, then load-test the build it just deployed — open-model k6 arrival rate, p95 / p99 / throughput / error-rate thresholds, plus Core Web Vitals. Set deploy to no to test an existing URL instead.',
    chips:['Deploy','Performance','k6 Runner','Web Vitals','QG1']},
   {id:'security', t:'Security Audit', ic:'🛡️', cc:'#e3b341', mode:'custom', tracks:['security'], scope:'on an existing repo',
-   p:'Run the security agent independently — author a SAST ruleset, scan the repo, gate on findings.',
-   chips:['Security','SAST Runner','SEC Gate']},
+   p:'One pass, six disciplines: static analysis, dependencies & CVEs, secrets, IaC misconfiguration, container image and a software bill of materials. Findings carry CWE / OWASP / CVSS and export as SARIF for code scanning. A discipline whose scanner is missing is reported as NOT RUN, never as clean.',
+   chips:['SAST','SCA / CVE','Secrets','IaC','Container','SBOM','SARIF','SEC Gate']},
   {id:'regression', t:'Regression', ic:'🧭', cc:'#c58bff', mode:'custom', tracks:['regression','delivery','jenkins'], scope:'on an existing repo',
    p:'Pick the impacted cases → run them in Jenkins → self-heal any failures and re-run Jenkins until everything passes → raise a PR for the changes, ready to merge.',
    chips:['Regression','Jenkins CI','Self-Heal','PR']},
@@ -1540,7 +1558,7 @@ const FLOW_INTAKE={   // keyed by flow id
     FIELD('k8s_selector','Pod label selector','text',false,'app=idurar-api','Which pod(s) to sample CPU/mem/restarts for (kubectl -l). Blank = skip per-pod metrics.'),
     FIELD('k8s_kubeconfig','Kubeconfig path (optional)','text',false,'/path/to/kubeconfig  — or set KUBECONFIG','Cluster access for kubectl top (read-only). Blank uses the KUBECONFIG env.'),
     FIELD('k8s_context','Kube context (optional)','text',false,'my-eks-cluster','kubectl context to use, if your kubeconfig has several.')]},
-  security:{fields:[F_REPO, FIELD('scope_prompt','What to scan','textarea',false,'e.g. "auth & payment modules" — blank = whole repo','Areas for the SAST scan to focus on.')]},
+  security:{fields:[F_REPO, FIELD('scope_prompt','What to scan','textarea',false,'e.g. "auth & payment modules" — blank = the whole repository','Focus for the static-analysis pass. The other five disciplines always cover the whole repository.',true)]},
   regression:{fields:[FIELD('repo','Regression suite repository','text',true,'https://github.com/org/regression-tests','Your existing regression automation code — runs in Jenkins.'), FIELD('base_url','App URL','text',false,'https://staging.yourapp.com','Where the regression cases execute against.'), FIELD('tags','Suites / tags to run','text',false,'@smoke @invoice — blank runs everything','Scope the (possibly hundreds of) cases; Jenkins runs them and self-heal loops until green.'), F_LOGIN_URL, F_LOGIN_USER, F_LOGIN_PASS]},
   coverage:{fields:[F_REPO,
     FIELD('min_coverage','Minimum coverage %','text',false,'80','Statement-coverage floor for the COVERAGE gate (policy default 70%).',true),
@@ -1744,7 +1762,12 @@ function renderResults(){
     {v:`${gPass}/${gTot||0}`, k:'Gates passed', sub:'final verdicts'},
     // On a coverage run there are no cases to count, so "Tests passed —" is dead space:
     // show the figure that run actually produced.
-    (!tTot && RUN.coverage && RUN.coverage.ok)
+    (!tTot && RUN.security && RUN.security.ok)
+      ? {v:`${RUN.security.total}`, k:'Findings',
+         sub:(()=>{ const sv=RUN.security.by_severity||{};
+                    const worst=_SEVS.find(k=>sv[k]);
+                    return worst?`${sv[worst]} ${worst}`:'none found'; })()}
+    : (!tTot && RUN.coverage && RUN.coverage.ok)
       ? {v:`${(((RUN.coverage.after&&RUN.coverage.after.ok)?RUN.coverage.after.total_pct:RUN.coverage.total_pct)||0).toFixed(1)}%`,
          k:'Coverage', sub: (RUN.coverage.after&&RUN.coverage.after.ok)?`up from ${RUN.coverage.total_pct.toFixed(1)}%`:'statements'}
       : {v: tTot?`${Math.round(tPass/tTot*100)}%`:'—', k:'Tests passed',
@@ -1786,6 +1809,7 @@ function renderResults(){
   renderSources();            // what came in from each source of truth (Jira / dev repo / app)
   renderCoverage();           // the coverage report: total, per file, per function, before → after
   renderPerformance();        // the load test: what was tested, the latencies, the thresholds
+  renderSecurityReport();     // the scan: methodologies run AND not run, findings by severity
   renderJourney(gateTries);   // the Ticket → Production journey (agent-wise, artifacts per stage)
   // ---- Quick links bar: the PR + the Jenkins run, front-and-centre ----
   const jl=_jenkinsLink();
@@ -1816,14 +1840,15 @@ function renderSecurity(){
   if(!r){ card.style.display='none'; return; }
   card.style.display='';
   if(!r.ok){ body.innerHTML=`<div class="sec-bad">⚠ Scan could not run: ${escapeHtml(r.error||'unknown')}</div>`; return; }
-  const s=r.by_severity||{high:0,medium:0,low:0};
+  const s=r.by_severity||{};
   const reportArt=(RUN.securityArts||[]).find(a=>a.type==='sast-report');
   const mods=Object.entries(r.by_module||{}).map(([m,n])=>`<span class="sec-mod">${escapeHtml(m)} · ${n}</span>`).join('') || '<span class="sec-mod ok">no findings</span>';
   const top=(r.findings||[]).slice().sort((a,b)=>({high:0,medium:1,low:2}[a.severity]-{high:0,medium:1,low:2}[b.severity])).slice(0,6)
     .map(f=>`<li><span class="sev ${f.severity}">${f.severity}</span> <b>${escapeHtml(f.rule)}</b> <span class="m">${escapeHtml(f.file||'')}:${f.line||''}</span></li>`).join('');
   body.innerHTML =
     `<div class="sec-cov">Scanned <b>${r.files_scanned}</b> files across <b>${(r.modules_scanned||[]).length}</b> module(s): ${escapeHtml((r.modules_scanned||[]).join(', '))}</div>`
-    + `<div class="sec-sev"><span class="sev high">${s.high} high</span><span class="sev medium">${s.medium} med</span><span class="sev low">${s.low} low</span><span class="sec-total">${r.total} total</span></div>`
+    + `<div class="sev-bar">${_SEVS.map(k=>`<span class="sev-chip ${k}${(s[k]||0)?'':' zero'}"><b>${s[k]||0}</b> ${k}</span>`).join('')}`
+       + `<span class="sec-total">${r.total} total</span></div>`
     + `<div class="sec-line">By module: ${mods}</div>`
     + (top?`<ul class="sec-list">${top}</ul>`:'')
     + (reportArt?`<div style="margin-top:8px"><span class="fn" style="color:var(--accent2);cursor:pointer" onclick='viewArtifact(${JSON.stringify(reportArt.path)})'>📄 View full report</span></div>`:'');
@@ -2046,6 +2071,98 @@ function renderPerformance(){
   el.innerHTML=`<div class="cov-card">${html}</div>`;
 }
 
+// ===== Security report: what ran, what it found, and what could NOT run =====
+// The last part is the one that matters. A scanner that is absent must read as "not run",
+// never as "nothing found" — the old summary showed only high/medium/low counts, so a
+// CRITICAL finding and a missing scanner were both invisible.
+const _SEVS = ['critical','high','medium','low','info'];
+function _secTier(s){ s=s||{};
+  if((s.critical||0)+(s.high||0) > 0) return 'poor';
+  if((s.medium||0) > 0) return 'part';
+  return 'good'; }
+
+function renderSecurityReport(){
+  const head=$('secHead'), el=$('secReport'); if(!el) return;
+  const r=RUN.security;
+  if(!r){ el.style.display='none'; if(head) head.style.display='none'; return; }
+  el.style.display='block'; if(head) head.style.display='flex';
+  if(!r.ok){
+    el.innerHTML=`<div class="cov-card"><div class="cov-warn">⚠ The scan could not run: `
+      + `${escapeHtml(r.error||'unknown error')}. Nothing was verified — this is not a clean result.</div></div>`;
+    return;
+  }
+  const sev=r.by_severity||{}, tier=_secTier(sev);
+  const meth=r.methodologies||[];
+  const ran=meth.filter(m=>m.ran), skipped=meth.filter(m=>!m.ran);
+
+  // ---- headline: the finding count, coloured by the worst severity actually present ----
+  let html=`<div class="cov-top">
+      <div class="cov-score ${tier}">
+        <div class="cov-pct">${r.total}</div>
+        <div class="cov-lbl">findings</div>
+      </div>
+      <div class="cov-facts">
+        <div class="sev-bar">${_SEVS.map(k=>`<span class="sev-chip ${k}${(sev[k]||0)?'':' zero'}">`
+            + `<b>${sev[k]||0}</b> ${k}</span>`).join('')}</div>
+        <div class="cov-rows">
+          <div class="cov-r"><span>Files scanned</span><b>${r.files_scanned}</b></div>
+          <div class="cov-r"><span>Modules</span><b>${(r.modules_scanned||Object.keys(r.by_module||{})).length}</b></div>
+          <div class="cov-r"><span>Disciplines run</span><b class="${ran.length?'ok':'bad'}">${ran.length} of ${meth.length}</b></div>
+          <div class="cov-r"><span>OWASP categories</span><b>${(r.owasp_coverage||[]).length}</b></div>
+        </div>
+      </div></div>`;
+
+  // ---- every methodology, including the ones that did not run. THE point of the panel ----
+  if(meth.length){
+    html += `<div class="cov-sec"><h4>Methodologies <span class="n">${ran.length} ran · ${skipped.length} did not</span></h4>
+      <table class="covtable"><thead><tr><th>Discipline</th><th>Tool</th>
+        <th class="num">Findings</th><th class="num">Status</th></tr></thead><tbody>`
+      + meth.map(m=>`<tr class="${m.ran?(m.count?'part':'good'):'poor'}">
+          <td>${escapeHtml(m.label||m.methodology||'')}</td>
+          <td class="f">${escapeHtml(m.tool||'—')}</td>
+          <td class="num ${m.count?'pc':'dim'}">${m.ran?m.count:'—'}</td>
+          <td class="num pc">${m.ran?'RAN':'NOT RUN'}</td></tr>`
+          + (m.ran?'':`<tr class="subrow"><td colspan="4" class="why">${escapeHtml(m.note||'scanner unavailable')}`
+             + `${m.install?` — enable with <code>${escapeHtml(m.install)}</code>`:''}</td></tr>`)).join('')
+      + `</tbody></table>`
+      + (skipped.length?`<div class="cov-warn" style="margin-top:12px">⚠ ${skipped.length} discipline(s) did not run. `
+         + `They are reported as NOT RUN, not as clean — their findings are unknown, not zero.</div>`:'')
+      + `</div>`;
+  }
+
+  // ---- findings, worst first, with the standards a reviewer triages by ----
+  const order=k=>_SEVS.indexOf(k);
+  const fs=(r.findings||[]).slice().sort((a,b)=>order(a.severity)-order(b.severity));
+  if(fs.length){
+    html += `<div class="cov-sec"><h4>Findings <span class="n">worst first · showing ${Math.min(fs.length,25)} of ${fs.length}</span></h4>
+      <table class="covtable"><thead><tr><th class="num">Severity</th><th>Rule</th><th>Where</th>
+        <th>Classification</th></tr></thead><tbody>`
+      + fs.slice(0,25).map(f=>`<tr>
+          <td class="num"><span class="sev-chip ${escapeHtml(f.severity||'info')}">${escapeHtml(f.severity||'info')}</span></td>
+          <td class="fn">${escapeHtml(f.rule||'')}`
+          + `${f.package&&f.package!==f.rule?` <span class="dim">${escapeHtml(f.package)}</span>`:''}</td>`
+          + `
+          <td class="f">${escapeHtml(f.file||'')}${f.line?`:${f.line}`:''}</td>
+          <td class="f dim">${escapeHtml(f.cwe||'')}${f.cwe&&f.owasp?' · ':''}${escapeHtml(f.owasp||'')}`
+          + `${f.cvss?` · CVSS ${f.cvss}`:''}</td></tr>`).join('')
+      + `</tbody></table>`
+      + (fs.length>25?`<div class="perf-note">The remaining ${fs.length-25} are in the full report and the SARIF export.</div>`:'')
+      + `</div>`;
+  } else {
+    html += `<div class="cov-sec"><div class="cov-allgreen">✓ No findings from the ${ran.length} discipline(s) that ran.</div></div>`;
+  }
+
+  // ---- the exports a security team actually ingests ----
+  const arts=(RUN.securityArts||[]).filter(a=>a.path);
+  if(arts.length){
+    html += `<div class="cov-sec"><h4>Exports</h4><div class="jarts" style="margin:0">`
+      + arts.map(a=>`<span class="jart" onclick='viewArtifact(${JSON.stringify(a.path)})'>`
+        + `${escapeHtml(a.path.split('/').pop())}<span class="jx">${escapeHtml(a.type||'')}</span></span>`).join('')
+      + `</div></div>`;
+  }
+  el.innerHTML=`<div class="cov-card">${html}</div>`;
+}
+
 // ===== The Ticket → Production journey: each SDLC stage, its agent, gate & artifacts =====
 const JOURNEY_STAGES = [
   {key:'req',      name:'Requirements',        ic:'🗺️', node:'generate_ac',            gate:null,       arts:[]},
@@ -2099,7 +2216,14 @@ function renderJourney(gateTries){
       ev = d.ok ? `Built and booted the repository on <code>${escapeHtml(d.url||'')}</code>`
                   + `${d.strategy?` (${escapeHtml(d.strategy)})`:''} — every test in this run targeted that build, not a pre-existing environment.`
                 : `Deployment did not come up: ${escapeHtml(d.error||'unknown error')}`; }
-    if(st.key==='sec' && RUN.security && RUN.security.ok){ const s=RUN.security.by_severity; ev=`Scanned ${RUN.security.files_scanned} files across ${(RUN.security.modules_scanned||[]).length} modules — ${RUN.security.total} findings (${s.high} high / ${s.medium} med / ${s.low} low).`; }
+    if(st.key==='sec' && RUN.security && RUN.security.ok){ const s=RUN.security.by_severity||{};
+      // CRITICAL was omitted here and in the summary card, so the single most serious class
+      // of finding did not appear anywhere on the Results screen.
+      const parts=_SEVS.filter(k=>s[k]).map(k=>`${s[k]} ${k}`);
+      const meth=(RUN.security.methodologies||[]); const notRun=meth.filter(m=>!m.ran).length;
+      ev=`Scanned ${RUN.security.files_scanned} files across ${(RUN.security.modules_scanned||[]).length} module(s) — `
+        + `${RUN.security.total} finding(s)${parts.length?` (${parts.join(' / ')})`:''}`
+        + `${notRun?`; ${notRun} discipline(s) could not run`:''}.`; }
     if(st.key==='ci'){ const jl=_jenkinsLink(); if(jl) ev=`Jenkins ${jl.overall||jl.status} — ${jl.passed||0} passed, ${jl.failed||0} failed${jl.url?` · <a class="jlink" href="${jl.url}" target="_blank" rel="noopener">build ↗</a>`:''}`; }
     if(st.key==='delivery' && RUN.pr){ const u=RUN.pr.url; ev = (u&&u.startsWith('http'))?`<a class="jlink" href="${u}" target="_blank" rel="noopener">${escapeHtml((RUN.pr.repo||'')+(RUN.pr.number?(' #'+RUN.pr.number):''))} — open PR ↗</a>`:escapeHtml(u||'drafted'); }
     if(!ev && gd) ev=escapeHtml(gd.reason||'');

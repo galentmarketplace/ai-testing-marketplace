@@ -244,21 +244,44 @@ Result: the repository's own jest suite, 146 passed, 0 failed, UNIT gate pass.
 **The point to make:** these are the team's existing tests, run as they are. Nothing was
 generated and nothing was replaced.
 
-## Security audit — ~45s
+## Security audit — ~50s
 
-Playbook **Security Audit**. Repository `https://github.com/galentmarketplace/sample-app-web`.
+**Playbooks → Security Audit.** Under *Use a saved Configuration* pick **Sample App Web
+(perf + security)**. Leave *What to scan* blank to cover the whole repository. Untick **Mock
+mode** and run.
 
-Result: 95 findings (67 high, 27 medium, 1 low) across six methodologies — static analysis,
-dependencies and CVEs, secrets, infrastructure misconfiguration, container image, and a
-software bill of materials. SARIF 2.1.0 emitted for GitHub code scanning.
+Result: **94 findings — 0 critical, 67 high, 26 medium, 1 low** across 163 files, six
+disciplines run and one that could not, SARIF 2.1.0 emitted for the GitHub Security tab.
 
-**The point to make:** one pass, six disciplines, and it degrades honestly — a methodology
-whose scanner is absent is reported as not run rather than as clean.
+The **Methodologies** table is the slide. Read it down:
+
+| Discipline | Tool | Findings | Status |
+|---|---|---|---|
+| Static analysis (SAST) | Semgrep p/default | 5 | RAN |
+| Dependencies & CVEs (SCA) | npm audit | 83 | RAN |
+| Secret scanning | Gitleaks | 0 | RAN |
+| IaC / config misconfig | Checkov | 2 | RAN |
+| Container / image scan | Trivy | 4 | RAN |
+| SBOM & license inventory | Syft (CycloneDX) | 0 | RAN |
+| Dynamic (DAST) / API security | OWASP ZAP | — | **NOT RUN** |
+
+**The point to make:** one pass, six disciplines — and the seventh says **NOT RUN**, with the
+reason and the command that would enable it, followed by the line that matters:
+
+> ⚠ 1 discipline(s) did not run. They are reported as NOT RUN, not as clean — their findings
+> are unknown, not zero.
+
+Any tool can show you what it found. Showing you what it could *not* look for is the part
+that makes the number trustworthy. Then point at **Secret scanning · 0 · RAN**: that zero
+means something precisely because the row above it can say NOT RUN instead.
+
+Each finding carries its CWE, its OWASP Top 10 category and a CVSS score where the advisory
+has one, so a reviewer can triage without opening the repository.
 
 ## Performance — ~120s
 
 **Playbooks → Performance.** Under *Use a saved Configuration* pick **Sample App Web
-(performance)**. The flow already includes the deploy step, so leave **Build & deploy the app
+(perf + security)**. The flow already includes the deploy step, so leave **Build & deploy the app
 first?** as `yes`; set **Target load** to `40` and **Test type** to `load`. Untick **Mock
 mode** and run.
 

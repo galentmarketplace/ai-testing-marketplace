@@ -117,12 +117,12 @@ def run_security_scan(state: PipelineState) -> dict:
         print(f"  [Security Scan] {', '.join(report.get('methodologies_run', [])) or 'no scanners'} → "
               f"{report['total']} finding(s) (C{s.get('critical', 0)} H{s['high']} M{s['medium']} L{s['low']})")
 
-    # Record as a run so it appears in the results; findings do NOT fail the run.
-    rr = list(state.get("run_results", []))
-    rr.append({"run_id": "semgrep", "suite": "security",
-               "passed": report["files_scanned"] if report.get("ok") else 0,
-               "failed": 0, "failures": []})
-    return {"security_artifacts": arts, "run_results": rr, "security_report": report}
+    # A scan is NOT a test suite. This used to append a run result with
+    # `passed = files_scanned`, so 163 scanned files became "163 passed tests" and the
+    # Results screen reported "100% tests passed" on a run that had just found 67
+    # high-severity issues. The scan reports itself through `security_report` and the SEC
+    # gate; it must not manufacture a pass count it never measured.
+    return {"security_artifacts": arts, "security_report": report}
 
 
 def security_gate(state: PipelineState) -> dict:
