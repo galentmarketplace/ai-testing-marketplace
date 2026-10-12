@@ -226,31 +226,34 @@ def summarize(records: list[dict]) -> dict:
 
 
 # --------------------------------------------------------------------------- verification
-def _numbers_in(obj) -> set[str]:
-    """Every figure the summary actually contains, in the spellings a writer would use."""
+def _numbers_in(obj) -> tuple[set[str], set[str]]:
+    """Every figure the summary contains, and separately those that are PERCENTAGES.
+
+    The two sets exist because the first one is large and forgiving: it holds every run
+    number in every series, so an invented round percentage can collide with one by accident
+    ("73% of runs completed" passes because run 73 exists). A token written as a percentage
+    is therefore checked against percentage-valued figures only.
+    """
     out: set[str] = set()
+    pct: set[str] = set()
 
-    def norm(v):
-        if isinstance(v, bool) or v is None:
-            return
-        if isinstance(v, int | float):
-            out.add(f"{v:g}")
-            out.add(f"{round(float(v)):d}")
-            out.add(f"{float(v):.1f}")
-            out.add(f"{float(v):.2f}")
+    def spellings(v) -> set[str]:
+        return {f"{v:g}", f"{round(float(v)):d}", f"{float(v):.1f}", f"{float(v):.2f}"}
 
-    def walk(o):
+    def walk(o, key=""):
         if isinstance(o, dict):
-            for v in o.values():
-                walk(v)
+            for k, v in o.items():
+                walk(v, k)
         elif isinstance(o, list):
             for v in o:
-                walk(v)
-        else:
-            norm(o)
+                walk(v, key)
+        elif not isinstance(o, bool) and isinstance(o, int | float):
+            out.update(spellings(o))
+            if "pct" in key or "rate" in key or "percent" in key:
+                pct.update(spellings(o))
 
     walk(obj)
-    return {x.lstrip("+") for x in out}
+    return {x.lstrip("+") for x in out}, {x.lstrip("+") for x in pct}
 
 
 # A hyphen is a minus sign only when no WORD character precedes it. Both live false alarms
@@ -267,18 +270,23 @@ def unverified_figures(narrative: str, facts: dict) -> list[str]:
     not produce. If a figure appears in the narrative and nowhere in the computed facts, the
     model invented it — which is the same failure as a fabricated pass, in a nicer typeface.
     """
-    allowed = _numbers_in(facts)
+    allowed, pct_allowed = _numbers_in(facts)
+    text = narrative or ""
     bad: list[str] = []
-    for tok in _NUM.findall(narrative or ""):
+    for m in _NUM.finditer(text):
+        tok = m.group()
         v = tok.lstrip("+")
-        if v in allowed:
+        # "73%" is a claim about a rate, so it must match a rate — not merely some number
+        # that happens to appear in the data, such as the 73rd run's number.
+        pool = pct_allowed if text[m.end():m.end() + 1] == "%" else allowed
+        if v in pool:
             continue
         try:
             f = float(v)
         except ValueError:
             continue
         # a derived rounding of a real figure is fine; an invented one is not
-        if any(abs(f - float(a)) < 0.05 for a in allowed if _is_num(a)):
+        if any(abs(f - float(a)) < 0.05 for a in pool if _is_num(a)):
             continue
         bad.append(tok)
     return sorted(set(bad), key=lambda s: (len(s), s))

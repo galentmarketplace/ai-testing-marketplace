@@ -241,9 +241,11 @@ Two secondary points if there is appetite:
 itself. Type a question (*"which flow blocks most often, and is the coverage work
 holding?"*), set **How many recent runs** to `100`, untick **Mock mode** and run.
 
-Result over the real history: **100 runs analysed, 80% completed, $9.14 spent, 107
-self-corrections across 40 runs** — and a written analysis that found, unprompted, that the
-UNIT gate fails 36.4% of the time while COVERAGE has never failed in 25 evaluations.
+Result over the real history *(as of 12 October — every run you do adds to it, so read the
+live figures off the screen rather than quoting these)*: **100 runs analysed, 80% completed,
+$9.14 spent, 107 self-corrections across 40 runs** — and a written analysis that found,
+unprompted, that the UNIT gate fails 36.4% of the time while COVERAGE has never failed in 25
+evaluations.
 
 **The point to make — and it is the sharpest one in the deck:** the model did not compute
 any of those numbers. Every figure comes from code; the model only writes about them. Then
@@ -253,11 +255,13 @@ the gate checks the prose against the data and reports any figure that is not in
 ✓ Every figure in this write-up is traceable to the computed data.
 ```
 
-Say what that line costs: on the first two live runs it read *⚠ 2 figures do not appear in
-the computed data* — and both times it was the checker misreading a hyphen, not the model
-lying. Both were fixed. The mechanism is there because a model asked to summarise metrics
-will happily produce a plausible percentage, and a plausible percentage is a false pass
-wearing a nicer typeface.
+Say what that line costs. The first live run flagged 2 figures and the second flagged 1 —
+each time the checker had misread a hyphen (`runs 86-89`, `a sub-80% rate`), not the model
+lying; both were fixed. A later review found the opposite failure: an invented round
+percentage could hide behind a matching run number, so `73%` passed when run 73 existed.
+Percentages are now checked against rates only. The mechanism is worth that trouble because
+a model asked to summarise metrics will happily produce a plausible percentage, and a
+plausible percentage is a false pass wearing a nicer typeface.
 
 Then point at the amber line under the headline:
 

@@ -131,6 +131,21 @@ def test_a_hyphenated_range_is_not_read_as_a_negative_number():
     assert analytics.unverified_figures("coverage rose in runs 86-89 and 91", FACTS) == []
 
 
+def test_an_invented_percentage_cannot_hide_behind_a_run_number():
+    """The allowed set holds every run number in every series, so a round invented
+    percentage can collide with one by accident: "73% of runs completed" passed because
+    run 73 exists. A token written as a percentage is checked against rates only."""
+    assert analytics.unverified_figures("73% of runs completed", FACTS) == ["73"]
+
+
+def test_a_real_percentage_still_passes():
+    assert analytics.unverified_figures("79% of runs completed", FACTS) == []
+
+
+def test_a_bare_run_number_is_still_allowed():
+    assert analytics.unverified_figures("the jump first appears in run 86", FACTS) == []
+
+
 def test_a_hyphen_inside_a_word_is_not_a_minus_sign():
     """Live: "a sub-80% completion rate" was reported as the invented figure -80."""
     assert analytics.unverified_figures("a sub-100 run sample", FACTS) == []
