@@ -235,6 +235,43 @@ Two secondary points if there is appetite:
   80% of the source files, so the effective figure is 72.6%. A tool reporting 90.7% alone is
   flattering you
 
+## Run insights — ~16s
+
+**Playbooks → Run Insights.** No Configuration needed — this one analyses the platform
+itself. Type a question (*"which flow blocks most often, and is the coverage work
+holding?"*), set **How many recent runs** to `100`, untick **Mock mode** and run.
+
+Result over the real history: **100 runs analysed, 80% completed, $9.14 spent, 107
+self-corrections across 40 runs** — and a written analysis that found, unprompted, that the
+UNIT gate fails 36.4% of the time while COVERAGE has never failed in 25 evaluations.
+
+**The point to make — and it is the sharpest one in the deck:** the model did not compute
+any of those numbers. Every figure comes from code; the model only writes about them. Then
+the gate checks the prose against the data and reports any figure that is not in it:
+
+```
+✓ Every figure in this write-up is traceable to the computed data.
+```
+
+Say what that line costs: on the first two live runs it read *⚠ 2 figures do not appear in
+the computed data* — and both times it was the checker misreading a hyphen, not the model
+lying. Both were fixed. The mechanism is there because a model asked to summarise metrics
+will happily produce a plausible percentage, and a plausible percentage is a false pass
+wearing a nicer typeface.
+
+Then point at the amber line under the headline:
+
+> ⚠ 97 of unknown provenance — included, not assumed real
+
+Simulated runs are excluded from every figure. Runs recorded before the platform tracked
+provenance are included but flagged, because "we don't know" is not the same as "it was
+real". The trend tiles repeat the caveat and name what a simulated figure looks like
+(p95 640ms, 74.2% coverage) so anyone can spot one.
+
+**If asked "could we point this at Jira or our CI instead?"** — yes, and that is the
+roadmap. The analysis layer is deterministic and source-agnostic; the run store is simply
+the first source of truth it reads.
+
 ## Unit tests — ~6s
 
 Playbook **Unit Tests**. Repository `https://github.com/galentmarketplace/sample-app-web`.

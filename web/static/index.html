@@ -439,6 +439,23 @@
   .covtable td.why { font-size:11.5px; color:var(--muted); }
   .covtable td.why code { font-family:var(--font-mono); font-size:11px; background:var(--panel2);
                           padding:1px 6px; border-radius:5px; }
+  .ins-scope { font-size:12.5px; margin-bottom:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .ins-narr p { margin:6px 0 0; font-size:13px; line-height:1.65; }
+  .ins-head { font-size:14px !important; font-weight:600; margin-top:12px !important; }
+  .ins-sec { margin-top:14px; }
+  .ins-sec b { font-size:12px; letter-spacing:.03em; text-transform:uppercase; color:var(--muted); }
+  .ins-trends { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; }
+  .ins-trend { padding:12px 14px; border-radius:10px; background:var(--panel2);
+               border-left:3px solid var(--muted); }
+  .ins-trend.good { border-left-color:var(--ok); color:var(--ok); }
+  .ins-trend.part { border-left-color:var(--warn); color:var(--warn); }
+  .ins-trend.poor { border-left-color:var(--fail); color:var(--fail); }
+  .ins-trend .t-lbl { font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
+  .ins-trend .t-now { font-family:var(--font-mono); font-size:24px; font-weight:700;
+                      font-variant-numeric:tabular-nums; margin:4px 0 6px; }
+  .ins-trend .t-sub, .ins-trend .t-few { font-size:11px; color:var(--muted); margin-top:4px;
+                                         font-family:var(--font-mono); }
+  .spark { display:block; overflow:visible; }
   .cov-sec { margin-top:20px; }
   .cov-sec h4 { margin:0 0 10px; font-size:13px; display:flex; align-items:baseline; gap:8px; }
   .cov-sec h4 .n { font-weight:400; font-size:11.5px; color:var(--muted); font-family:var(--font-mono); }
@@ -979,6 +996,10 @@
     <div class="kpis" id="kpis"></div>
     <div class="result-links" id="resultLinks" style="display:none"></div>
 
+    <div class="cov-head" id="insHead" style="display:none"><h3>Run insights</h3>
+      <span class="journey-sub">computed from the run history — the write-up quotes these figures and no others</span></div>
+    <div class="covreport" id="insReport" style="display:none"></div>
+
     <div class="cov-head" id="covHead" style="display:none"><h3>Code coverage</h3>
       <span class="journey-sub">measured by running the repository's own tests, before and after this run</span></div>
     <div class="covreport" id="covReport" style="display:none"></div>
@@ -1406,6 +1427,7 @@ function stepNode(d){
   // Coverage artifacts were never pushed, so a coverage run's report, LCOV and Cobertura
   // existed on disk with no way to reach them from the Results screen.
   if(u.coverage_artifacts) _pushArts(u.coverage_artifacts);
+  if(u.insights_artifacts) _pushArts(u.insights_artifacts);
   if(u.run_results) renderRuns(u.run_results);
   if(u.gate_decisions) renderGates(u.gate_decisions);
   if(u.pr) renderPR(u.pr);
@@ -1512,6 +1534,9 @@ const FLOWS=[
   {id:'coverage', t:'Go Code Coverage', ic:'📈', cc:'#39c5cf', mode:'custom', tracks:['coverage','delivery'], scope:'on an existing Go repo',
    p:'Measure real coverage with -coverprofile, then CLOSE the gap: write unit tests for the uncovered functions, compile and run them, re-measure, and raise a pull request with the verified tests. Leave the destination blank to measure only.',
    chips:['go test -cover','Go Test Gen','verified','LCOV + Cobertura','COVERAGE Gate','PR']},
+  {id:'insights', t:'Run Insights', ic:'📊', cc:'#c58bff', mode:'custom', tracks:['insights'], scope:'on this platform\u2019s own run history',
+   p:'Ask about your testing in plain English. Every figure is computed from the run history — completion and block rates per flow, which gate actually stops work, coverage and latency trends, cost — and the model writes the analysis from those figures only. Simulated runs are excluded, and a number in the write-up that is not in the data is reported as unverified.',
+   chips:['Run history','Computed figures','Trends','Cost','INSIGHTS Gate']},
   {id:'custom', t:'Custom', ic:'⚙️', cc:'#7c8db5', mode:'custom', custom:true, scope:'compose your own',
    p:'Drag agents onto the canvas to build a flow. Test a repo, or switch on “build from a story”.', chips:['Build it yourself']},
 ];
@@ -1564,6 +1589,9 @@ const FLOW_INTAKE={   // keyed by flow id
     FIELD('min_coverage','Minimum coverage %','text',false,'80','Statement-coverage floor for the COVERAGE gate (policy default 70%).',true),
     FIELD('dest_repo','Destination repo for the fix (owner/repo)','text',false,'org/service — blank = measure only, no PR','Where the generated tests are committed and the pull request is raised. Usually the same repository you are measuring.',true),
     FIELD('coverage_blocking','Block below threshold? (yes/no)','text',false,'no','Advisory by default (observe-first); yes = the gate FAILS below the threshold.')]},
+  insights:{fields:[
+    FIELD('question','What do you want to know?','textarea',false,'e.g. "which flow blocks most often, and is coverage holding?" — blank = a general review','Steers the analysis. The figures are computed either way; this decides what the write-up concentrates on.',true),
+    FIELD('history_limit','How many recent runs to analyse','text',false,'50','The most recent N runs. Simulated runs are excluded from the figures and counted separately.',true)]},
   unit:{fields:[F_REPO, FIELD('test_cmd','Unit test command (optional)','text',false,'npm test — blank = auto-detect','How the Unit Test agent runs the suite in the repo.')]},
 };
 let intakeValues={};
@@ -1721,6 +1749,7 @@ function accumulate(d){ const u=d.update||{};
   if(u.acceptance_criteria) RUN.ac=u.acceptance_criteria;
   if(u.functional_cases) RUN.fcases=u.functional_cases;   // functional test cases derived from AC
   if(u.heal_notes) RUN.heal=u.heal_notes;                 // self-heal repair log (for the failure detail)
+  if(u.insights_report) RUN.insights=u.insights_report;   // run-history analysis + its narrative
   if(u.coverage_report) RUN.coverage=u.coverage_report;   // statement coverage, per file + per function
   if(u.perf_vitals) RUN.vitals=u.perf_vitals;             // Core Web Vitals (lab) from the deployed build
   if(u.deployment) RUN.deployment=u.deployment;           // the build this run booted, and where
@@ -1762,7 +1791,10 @@ function renderResults(){
     {v:`${gPass}/${gTot||0}`, k:'Gates passed', sub:'final verdicts'},
     // On a coverage run there are no cases to count, so "Tests passed —" is dead space:
     // show the figure that run actually produced.
-    (!tTot && RUN.security && RUN.security.ok)
+    (!tTot && RUN.insights && RUN.insights.ok)
+      ? {v:`${RUN.insights.runs_analysed}`, k:'Runs analysed',
+         sub:`#${RUN.insights.run_range.first}–#${RUN.insights.run_range.last}`}
+    : (!tTot && RUN.security && RUN.security.ok)
       ? {v:`${RUN.security.total}`, k:'Findings',
          sub:(()=>{ const sv=RUN.security.by_severity||{};
                     const worst=_SEVS.find(k=>sv[k]);
@@ -1807,6 +1839,7 @@ function renderResults(){
   }).join('') : '<div class="empty">No gates in scope.</div>');
   $('rRuns').innerHTML = runs.length? runs.map(r=>{const total=r.passed+r.failed,ok=r.failed===0,perf=r.perf?` · p95 ${r.perf.p95_ms}ms · err ${(r.perf.error_rate*100).toFixed(1)}%`:'',it=runTries[r.suite]>1?` <span class="m">· iteration ${runTries[r.suite]}</span>`:'';return `<div class="run"><span><b>${r.suite}</b>${it}</span><span class="rate" style="color:${ok?'var(--ok)':'var(--fail)'}">${r.passed}/${total} passed<span class="m">${perf}</span></span></div>`;}).join('') : '<div class="empty">No test runs.</div>';
   renderSources();            // what came in from each source of truth (Jira / dev repo / app)
+  renderInsights();           // the run-history analysis, and whether its prose invented a figure
   renderCoverage();           // the coverage report: total, per file, per function, before → after
   renderPerformance();        // the load test: what was tested, the latencies, the thresholds
   renderSecurityReport();     // the scan: methodologies run AND not run, findings by severity
@@ -2163,8 +2196,161 @@ function renderSecurityReport(){
   el.innerHTML=`<div class="cov-card">${html}</div>`;
 }
 
+// ===== Run insights: analysis of the platform's own history =====
+// The panel's job is to keep two things apart: figures that were COMPUTED from the run
+// store, and prose a model wrote about them. Where the prose states a number the data does
+// not contain, that is shown as a defect, not smoothed over.
+function _insTier(pct){ return pct>=90?'good':(pct>=70?'part':'poor'); }
+
+// A line needs four points to be a line; below that the skill's guidance is a stat card.
+// Values are always printed as text as well, so the chart is never the only way to read it.
+function _spark(points, w, h){
+  const vs=points.filter(v=>typeof v==='number');
+  if(vs.length<2) return '';
+  const lo=Math.min(...vs), hi=Math.max(...vs), span=(hi-lo)||1;
+  const step=w/Math.max(1,vs.length-1);
+  const pts=vs.map((v,i)=>`${(i*step).toFixed(1)},${(h-((v-lo)/span)*h).toFixed(1)}`);
+  const last=pts[pts.length-1].split(',');
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true">`
+    + `<polyline points="${pts.join(' ')}" fill="none" stroke="currentColor" stroke-width="1.5"`
+    + ` stroke-linejoin="round" stroke-linecap="round"/>`
+    + `<circle cx="${last[0]}" cy="${last[1]}" r="2.5" fill="currentColor"/></svg>`;
+}
+
+function renderInsights(){
+  const head=$('insHead'), el=$('insReport'); if(!el) return;
+  const r=RUN.insights;
+  if(!r){ el.style.display='none'; if(head) head.style.display='none'; return; }
+  el.style.display='block'; if(head) head.style.display='flex';
+  if(!r.ok){
+    el.innerHTML=`<div class="cov-card"><div class="cov-none">No analysis — ${escapeHtml(r.error||'no run history')}.</div></div>`;
+    return;
+  }
+  const bad=r.unverified_figures||[];
+
+  // ---- headline + provenance. What was excluded belongs next to the number, not in a footnote.
+  let html=`<div class="cov-top">
+      <div class="cov-score ${_insTier(r.completion_rate_pct||0)}">
+        <div class="cov-pct">${r.completion_rate_pct}<small>%</small></div>
+        <div class="cov-lbl">runs completed</div>
+      </div>
+      <div class="cov-facts">
+        <div class="ins-scope">Analysed <b>${r.runs_analysed}</b> run(s), #${r.run_range.first}–#${r.run_range.last}
+          ${r.mock_runs_excluded?`<span class="perf-src ok">✓ ${r.mock_runs_excluded} simulated run(s) excluded</span>`:''}
+          ${r.provenance_unknown?`<span class="perf-src warn">⚠ ${r.provenance_unknown} of unknown provenance — included, not assumed real</span>`:''}
+        </div>
+        <div class="cov-rows">
+          <div class="cov-r"><span>Completed</span><b class="ok">${r.completed}</b></div>
+          <div class="cov-r"><span>Blocked</span><b class="${r.blocked?'warn':'ok'}">${r.blocked}</b></div>
+          <div class="cov-r"><span>Median duration</span><b>${r.median_duration_s}s</b></div>
+          <div class="cov-r"><span>Total cost</span><b>$${r.total_cost_usd}</b></div>
+          <div class="cov-r"><span>Median cost</span><b>$${r.median_cost_usd}</b></div>
+          <div class="cov-r"><span>Self-corrections</span><b>${r.total_self_corrections} in ${r.self_correcting_runs} run(s)</b></div>
+        </div>
+      </div></div>`;
+
+  // ---- the model's words, badged with whether they survived checking ----
+  const n=r.narrative;
+  if(n){
+    html += `<div class="cov-sec ins-narr"><h4>Analysis <span class="n">written by the model from the figures below</span></h4>`
+      + (bad.length
+         ? `<div class="cov-warn">⚠ ${bad.length} figure(s) below do not appear in the computed data `
+           + `(<code>${bad.map(escapeHtml).join('</code>, <code>')}</code>). Those sentences are the `
+           + `model's wording, not measurements.</div>`
+         : `<div class="cov-allgreen">✓ Every figure in this write-up is traceable to the computed data.</div>`)
+      + `<p class="ins-head">${escapeHtml(n.headline||'')}</p>`
+      + (n.sections||[]).map(x=>`<div class="ins-sec"><b>${escapeHtml(x.title||'')}</b>`
+          + `<p>${escapeHtml(x.body||'')}</p></div>`).join('')
+      + ((n.recommendations||[]).length
+         ? `<div class="ins-sec"><b>What to do next</b><ul class="cov-skips">`
+           + n.recommendations.map(x=>`<li>${escapeHtml(x)}</li>`).join('')+`</ul></div>`
+         : '')
+      + `</div>`;
+  } else if(r.note){
+    html += `<div class="cov-sec"><div class="cov-warn">⚠ No write-up: ${escapeHtml(r.note)}. `
+      + `The computed figures are unaffected.</div></div>`;
+  }
+
+  // ---- reliability by flow, worst completion first ----
+  const flows=(r.flows||[]).slice().sort((a,b)=>(a.completion_rate_pct||0)-(b.completion_rate_pct||0));
+  if(flows.length){
+    html += `<div class="cov-sec"><h4>By flow <span class="n">least reliable first</span></h4>
+      <table class="covtable"><thead><tr><th>Flow</th><th class="num">Runs</th>
+        <th class="num">Completed</th><th class="num">Blocked</th>
+        <th class="num">Median</th><th class="num">Median cost</th></tr></thead><tbody>`
+      + flows.map(f=>`<tr class="${_insTier(f.completion_rate_pct||0)}">
+          <td>${escapeHtml(f.flow)}</td><td class="num dim">${f.runs}</td>
+          <td class="num pc">${f.completion_rate_pct}%</td>
+          <td class="num ${f.blocked?'pc':'dim'}">${f.blocked}</td>
+          <td class="num dim">${f.median_duration_s==null?'—':f.median_duration_s+'s'}</td>
+          <td class="num dim">${f.median_cost_usd==null?'—':'$'+f.median_cost_usd}</td></tr>`).join('')
+      + `</tbody></table></div>`;
+  }
+
+  // ---- which gate actually stops work ----
+  const gates=(r.gates||[]).filter(g=>g.evaluated);
+  if(gates.length){
+    html += `<div class="cov-sec"><h4>Gates <span class="n">which one stops runs</span></h4>
+      <table class="covtable"><thead><tr><th>Gate</th><th class="num">Evaluated</th>
+        <th class="num">Failed</th><th>Fail rate</th></tr></thead><tbody>`
+      + gates.map(g=>`<tr class="${g.failed?'part':'good'}"><td class="fn">${escapeHtml(g.gate)}</td>
+          <td class="num dim">${g.evaluated}</td><td class="num ${g.failed?'pc':'dim'}">${g.failed}</td>
+          <td class="bar">${_covBar(g.fail_rate_pct||0)}<span class="dim"> ${g.fail_rate_pct}%</span></td></tr>`).join('')
+      + `</tbody></table></div>`;
+  }
+
+  // ---- trends. Four points or more earns a line; fewer gets the numbers alone ----
+  const trends=[];
+  (r.coverage||[]).forEach(c=>{
+    const series=(c.series||[]).map(x=>x.after!=null?x.after:x.before);
+    trends.push({label:`Coverage · ${c.repo}`, now:`${c.latest_pct}%`,
+                 sub:`baseline ${c.baseline_pct}% · ${c.runs} run(s)`, series, cls:'good'});
+  });
+  if(r.performance){
+    const p=r.performance;
+    trends.push({label:'p95 latency', now:`${p.median_p95_ms}ms`,
+                 sub:`worst ${p.worst_p95_ms}ms · ${p.runs} run(s)`,
+                 series:(p.series||[]).map(x=>x.p95_ms), cls:'part'});
+  }
+  if(r.security){
+    const s=r.security;
+    trends.push({label:'Security findings', now:`${s.latest_total}`,
+                 sub:`${s.delta>=0?'+':''}${s.delta} since first scan · ${s.runs} scan(s)`,
+                 series:(s.series||[]).map(x=>x.total), cls:s.delta>0?'poor':'good'});
+  }
+  if(trends.length){
+    html += `<div class="cov-sec"><h4>Trends <span class="n">across the analysed runs</span></h4>`
+      + (r.provenance_unknown
+         ? `<div class="cov-warn" style="margin-bottom:12px">⚠ ${r.provenance_unknown} of these runs `
+           + `predate provenance tracking, so a simulated run's figures (the mock runner emits `
+           + `p95 640ms and 74.2% coverage) may be among the points below. Runs from here on `
+           + `record whether they were simulated.</div>`
+         : '')
+      + `<div class="ins-trends">`
+      + trends.map(t=>{
+          const pts=t.series.filter(v=>typeof v==='number');
+          return `<div class="ins-trend ${t.cls}">
+            <div class="t-lbl">${escapeHtml(t.label)}</div>
+            <div class="t-now">${escapeHtml(t.now)}</div>
+            ${pts.length>=4?_spark(pts,150,34):`<div class="t-few">${pts.length} data point(s) — too few to trend</div>`}
+            <div class="t-sub">${escapeHtml(t.sub)}</div></div>`;
+        }).join('')
+      + `</div></div>`;
+  }
+
+  const arts=_artsFor(['insights']);
+  if(arts.length){
+    html += `<div class="cov-sec"><h4>Exports</h4><div class="jarts" style="margin:0">`
+      + arts.map(a=>`<span class="jart" onclick='viewArtifact(${JSON.stringify(a.path)})'>`
+        + `${escapeHtml(a.path.split('/').pop())}<span class="jx">${escapeHtml(a.type||'')}</span></span>`).join('')
+      + `</div></div>`;
+  }
+  el.innerHTML=`<div class="cov-card">${html}</div>`;
+}
+
 // ===== The Ticket → Production journey: each SDLC stage, its agent, gate & artifacts =====
 const JOURNEY_STAGES = [
+  {key:'insights', name:'Run Insights',        ic:'📊', node:'analyze_runs',           gate:'INSIGHTS', arts:['insights']},
   {key:'req',      name:'Requirements',        ic:'🗺️', node:'generate_ac',            gate:null,       arts:[]},
   {key:'fcases',   name:'Functional Cases',    ic:'📋', node:'generate_functional_cases', gate:null,     arts:['functional']},
   {key:'build',    name:'Build',               ic:'🛠️', node:'generate_code',          gate:'UNIT',     arts:['code']},
@@ -2180,7 +2366,7 @@ const JOURNEY_STAGES = [
   {key:'ci',       name:'Jenkins CI',          ic:'🏗️', node:'run_jenkins',            gate:'JENKINS',  arts:[]},
   {key:'delivery', name:'Delivery → Production',ic:'🚀', node:'open_pr',                gate:null,       arts:[]},
 ];
-const AGENT_LABEL = {generate_ac:'Acceptance Criteria agent', generate_code:'Dev agent', deploy_app:'Deploy agent', run_unit_tests:'Unit Test agent', go_coverage:'Go Coverage agent', generate_go_tests:'Go Test Generation agent',
+const AGENT_LABEL = {analyze_runs:'Insights agent', generate_ac:'Acceptance Criteria agent', generate_code:'Dev agent', deploy_app:'Deploy agent', run_unit_tests:'Unit Test agent', go_coverage:'Go Coverage agent', generate_go_tests:'Go Test Generation agent',
   generate_ui_scripts:'Playwright agent', oracle_check:'Oracle Check (test-oracle auditor)', generate_perf_scripts:'Performance agent', select_regression:'Regression agent',
   generate_security_scan:'Security agent', generate_a11y:'Accessibility agent', generate_contract:'Contract agent',
   generate_functional_cases:'Functional Case agent', run_jenkins:'Jenkins CI agent', open_pr:'PR agent'};
@@ -2212,6 +2398,12 @@ function renderJourney(gateTries){
     let ev='';
     if(st.key==='req' && RUN.ac){ const n=(RUN.ac.criteria||RUN.ac.acceptance_criteria||[]).length||RUN.ac.length; ev=`Parsed acceptance criteria${n?` — ${n} criteria`:''} (source of truth).`; }
     if(st.key==='fcases' && RUN.fcases){ ev=`Derived ${RUN.fcases.length} functional test case(s) from the acceptance criteria — each automated case-wise.`; }
+    if(st.key==='insights' && RUN.insights && RUN.insights.ok){ const i=RUN.insights;
+      const bad=(i.unverified_figures||[]).length;
+      ev=`Analysed ${i.runs_analysed} run(s) (#${i.run_range.first}–#${i.run_range.last}) — `
+        + `${i.completion_rate_pct}% completed, $${i.total_cost_usd} spent. `
+        + (bad?`${bad} figure(s) in the write-up are not in the computed data.`
+              :`Every figure in the write-up is traceable to the computed data.`); }
     if(st.key==='deploy' && RUN.deployment){ const d=RUN.deployment;
       ev = d.ok ? `Built and booted the repository on <code>${escapeHtml(d.url||'')}</code>`
                   + `${d.strategy?` (${escapeHtml(d.strategy)})`:''} — every test in this run targeted that build, not a pre-existing environment.`

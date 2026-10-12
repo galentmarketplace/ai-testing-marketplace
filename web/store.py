@@ -132,6 +132,7 @@ def init_db() -> None:
             id TEXT PRIMARY KEY, login TEXT, name TEXT, token_hash TEXT UNIQUE,
             created_at REAL, last_used_at REAL);
         """)
+        _migrate_runs(c)
 
 
 # ---------- Audit log (who did what, to what, when) ----------
@@ -296,6 +297,18 @@ def save_session(sid: str, token: str, login: str, avatar: str,
                   (sid, encrypt(token), login, avatar, time.time(), idp, name or login))
 
 
+def _migrate_runs(c) -> None:
+    """Record whether a run was simulated.
+
+    Without it the run history cannot tell a measurement from a simulation, and anything
+    that trends the two together (the Insights agent) reports mock figures as fact. Existing
+    rows keep NULL = provenance unknown, which is reported as such rather than assumed real.
+    """
+    cols = {r[1] for r in c.execute("PRAGMA table_info(runs)")}
+    if "mock" not in cols:
+        c.execute("ALTER TABLE runs ADD COLUMN mock INTEGER")
+
+
 def _migrate_sessions(c) -> None:
     """Add idp/name to a sessions table created before SSO existed (no migration tool yet)."""
     cols = {r["name"] for r in c.execute("PRAGMA table_info(sessions)")}
@@ -320,13 +333,14 @@ def all_sessions() -> list[dict]:
 
 # ---------- runs ----------
 def create_run(run_id: str, login: str | None, flow: str, mode: str,
-               tracks, inputs, story) -> None:
+               tracks, inputs, story, mock: bool | None = None) -> None:
     now = time.time()
     with _write_lock, _conn() as c:
-        c.execute("INSERT INTO runs(id,login,flow,mode,tracks,inputs,story,status,created_at,updated_at,result)"
-                  " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        c.execute("INSERT INTO runs(id,login,flow,mode,tracks,inputs,story,status,created_at,updated_at,result,mock)"
+                  " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                   (run_id, login, flow, mode, json.dumps(tracks or []), json.dumps(inputs or {}),
-                   json.dumps(story or {}), "queued", now, now, None))
+                   json.dumps(story or {}), "queued", now, now, None,
+                   None if mock is None else int(bool(mock))))
 
 
 def set_status(run_id: str, status: str) -> None:
@@ -392,7 +406,7 @@ def run_status(run_id: str) -> str | None:
 def list_runs(login: str | None, limit: int = 50, admin: bool = False) -> list[dict]:
     """Recent runs for the caller (admins: every run), including the configuration each run
     was started with (tracks + inputs)."""
-    cols = "rowid AS num, id,login,flow,mode,tracks,inputs,status,created_at,updated_at"
+    cols = "rowid AS num, id,login,flow,mode,tracks,inputs,status,created_at,updated_at,mock"
     with _conn() as c:
         if not admin:
             rows = c.execute(f"SELECT {cols} FROM runs WHERE login=? ORDER BY rowid DESC LIMIT ?", (login or "", limit))

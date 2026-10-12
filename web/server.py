@@ -395,7 +395,7 @@ async def webhook_jira(request: Request):
                             "description": ""})
     login = os.environ.get("ATM_WEBHOOK_LOGIN", SERVICE_LOGIN)
     store.create_run(run_id, login, event.get("summary") or event["key"], req.mode,
-                     req.tracks, _redact(req.inputs), _redact(req.story))
+                     req.tracks, _redact(req.inputs), _redact(req.story), mock=bool(req.mock))
     threading.Thread(target=_execute_run, args=(run_id, req, None), daemon=True).start()
     _audit(request, None, "webhook.jira", event["key"], "ok", run=run_id, reason=why)
     return {"started": True, "run_id": run_id, "ticket": event["key"]}
@@ -485,7 +485,8 @@ def run(req: RunRequest, request: Request, principal: dict = Depends(require_aut
     flow = (req.story or {}).get("title") or req.mode
     _audit(request, principal, "run.start", run_id, mode=req.mode, mock=req.mock,
            project_id=req.project_id, ticket=req.ticket)
-    store.create_run(run_id, login, flow, req.mode, req.tracks, _redact(req.inputs), _redact(req.story))
+    store.create_run(run_id, login, flow, req.mode, req.tracks, _redact(req.inputs),
+                     _redact(req.story), mock=bool(req.mock))
     threading.Thread(target=_execute_run, args=(run_id, req, token), daemon=True).start()
     return {"run_id": run_id, "status": "running"}
 

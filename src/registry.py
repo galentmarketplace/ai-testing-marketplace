@@ -29,6 +29,7 @@ from .agents.dev_agent import generate_code
 from .agents.functional_case_agent import generate_functional_cases
 from .agents.go_coverage_agent import coverage_gate, go_coverage
 from .agents.go_test_agent import generate_go_tests
+from .agents.insights_agent import analyze_runs, insights_gate
 from .agents.jira_report_agent import jira_report
 from .agents.oracle_agent import oracle_check
 from .agents.perf_agent import generate_perf_scripts
@@ -160,6 +161,21 @@ REGISTRY: list[AgentSpec] = [
         on_fail_reset=(),   # observe-first audit — no Go test generator yet, so never self-heal-loop
         produces="gate on statement coverage vs policy threshold (advisory by default)",
         display=[DisplayNode("coverage_gate", "COVERAGE Gate", "✅", _C["eval"], "EVALUATION", "gate", parent="coverage")],
+    ),
+    # Analytics over the platform's OWN history. Deterministic arithmetic produces every
+    # figure; the model only writes about them, and the gate checks it did not invent any.
+    AgentSpec(
+        id="analyze_runs", label="Insights", kind="agent", fn=analyze_runs,
+        tracks=("insights",), category="Quality",
+        produces="analyse the run history — reliability, trends, cost — and write it up from computed figures",
+        display=[DisplayNode("insights", "Insights", "\U0001f4ca", _C["plan"], "ANALYSIS", "agent", column="insights")],
+    ),
+    AgentSpec(
+        id="insights_gate", label="INSIGHTS Gate", kind="gate", fn=insights_gate,
+        tracks=("insights",), depends_on=("analyze_runs",), gate_name="INSIGHTS",
+        on_fail_reset=(),   # reporting, not policy — it never loops
+        produces="check that every figure in the write-up is traceable to the computed data",
+        display=[DisplayNode("insights_gate", "INSIGHTS Gate", "\u2705", _C["eval"], "EVALUATION", "gate", parent="insights")],
     ),
     AgentSpec(
         id="generate_functional_cases", label="Functional Cases", kind="agent", fn=generate_functional_cases,
