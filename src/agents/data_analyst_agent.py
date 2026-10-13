@@ -21,6 +21,12 @@ Execution posture (model-written code over user-supplied data):
     modified by the script.
   * `sandbox.child_env()` — no secrets reach the child; MPLBACKEND=Agg keeps matplotlib headless.
   * a hard timeout, and output caps on what is read back.
+
+What is NOT enforced, and is worth being honest about: the script runs on the server's own
+interpreter, so its site-packages are importable and the network is reachable. The prompt
+forbids both, but a prompt is not a sandbox. Confining this properly needs a dedicated
+environment or a container — fine for a single-user deployment, not for running other
+people's questions.
 """
 import json
 import os

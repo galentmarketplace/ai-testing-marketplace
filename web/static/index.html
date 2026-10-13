@@ -1814,17 +1814,28 @@ function renderResults(){
 
   const gPass=gates.filter(g=>g.verdict==='pass').length, gTot=gates.length;
   const tPass=runs.reduce((a,r)=>a+r.passed,0), tTot=runs.reduce((a,r)=>a+r.passed+r.failed,0);
-  const cycles=RUN.gates.filter(g=>g.verdict==='fail').length;   // self-correction iterations to reach green
+  // A self-correction is a gate that failed AND then ended green. Counting every failed
+  // decision called a gate that never recovered a "correction", so a run with 0/1 gates
+  // passed announced itself as "green after 1 self-correction".
+  const cycles=Object.keys(finalGate).filter(g=>finalGate[g].verdict==='pass' && gateTries[g]>1).length;
+  const unresolved=gates.filter(g=>g.verdict!=='pass').length;
   // A replayed run opened long after it finished would otherwise read 0.0s, because
   // RUN.start is when the BROWSER opened it. Prefer the run's own stored timestamps.
   const secs = (RUN.t_started && RUN.t_finished)
     ? Math.max(0, RUN.t_finished - RUN.t_started).toFixed(1)
     : ((Date.now()-RUN.start)/1000).toFixed(1);
-  const cls=blocked?'bad':((gTot&&gPass<gTot)?'warn':'ok');
-  const title=blocked?'Blocked — human review needed':(shipped?'Shipped — pull request opened':'Completed successfully');
-  const iterNote = blocked ? '' : (cycles? ` · green after ${cycles} self-correction${cycles>1?'s':''}` : ' · passed first iteration');
+  const cls=blocked?'bad':(unresolved?'warn':'ok');
+  // "Completed successfully" over "GATES PASSED 0/1" is the platform's own failure mode in
+  // miniature: a headline the run did not earn. A gate that ended red is said out loud.
+  const title = blocked ? 'Blocked — human review needed'
+    : unresolved ? `Finished with ${unresolved} gate${unresolved>1?'s':''} not passed`
+    : shipped ? 'Shipped — pull request opened'
+    : 'Completed successfully';
+  const iterNote = blocked ? ''
+    : unresolved ? ` · ${gPass} of ${gTot} gates green`
+    : (cycles? ` · green after ${cycles} self-correction${cycles>1?'s':''}` : ' · passed first iteration');
   $('verdict').className='verdict '+cls;
-  $('verdict').innerHTML=`<div class="badge">${blocked?'⛔':'✓'}</div>
+  $('verdict').innerHTML=`<div class="badge">${blocked?'⛔':(unresolved?'!':'✓')}</div>
     <div><h2>${title}</h2><p>${escapeHtml(RUN.flowName || (RUN.flow?RUN.flow.t:RUN.mode))} · scope <b>${escapeHtml(RUN.modeName || RUN.mode)}</b>${iterNote}</p></div>
     <div class="meta">${RUN.mock?'mock run':'live Claude'}<br>${secs}s</div>`;
   const tiles=[
@@ -1852,7 +1863,7 @@ function renderResults(){
          // what a load test verified.
          sub:`${tPass}/${tTot} ${runs.some(x=>x.perf)?'k6 checks':'cases'} · final`},
     {v:RUN.agents.size, k:'Agents run'},
-    {v:cycles, k:'Self-corrections', sub:cycles?'gate fix-loops':'clean run'},
+    {v:cycles, k:'Self-corrections', sub:cycles?'gates that failed then went green':(unresolved?'none recovered':'clean run')},
     {v:secs+'s', k:'Duration'},
   ];
   $('kpis').innerHTML=tiles.map(t=>`<div class="kpi"><div class="v">${t.v}</div><div class="k">${t.k}</div>${t.sub?`<div class="sub">${t.sub}</div>`:''}</div>`).join('');

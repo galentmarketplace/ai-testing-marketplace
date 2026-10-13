@@ -267,9 +267,19 @@ On a 12-row sample it correctly ranked `login_locked` (66.7%) above `checkout_to
 and **excluded `tax_rounding`** — which fails every time, so it is broken, not flaky. Nobody
 told it that distinction.
 
-**If asked about safety** — the script runs in an isolated interpreter (`python -I`) in a fresh
-per-run directory, with no secrets in its environment, no network use, a hard timeout, and the
-data file *copied* in so the original cannot be modified.
+**If asked about safety, separate what is enforced from what is instructed** — and do separate
+them, because the difference is the question behind the question.
+
+*Enforced:* an isolated interpreter (`python -I`, so nothing beside the data can shadow a
+stdlib import), a fresh per-run working directory, no secrets in the child's environment, a
+hard timeout, output caps, and the data file *copied* in so the original cannot be modified.
+
+*Instructed only:* the prompt tells the script not to use the network and to stay within
+pandas, matplotlib and the standard library — but it runs on the server's interpreter, so
+nothing currently stops it reaching the network or importing another installed package. For a
+single-user proof of concept that is an acceptable trade; before this runs other people's
+questions it wants a dedicated environment or a container. Say that plainly if asked — it is a
+better answer than claiming an enforcement we do not have.
 
 **The honest comparison, if someone names Julius AI or ChatGPT's analyst:** the mechanism is the
 same and we did not invent it. What is ours is that the executed code ships as evidence, a

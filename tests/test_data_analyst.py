@@ -282,3 +282,33 @@ def test_the_insights_agent_still_computes_its_own_figures():
 
 if __name__ == "__main__":     # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+# ------------------------------------------------- the shared verdict banner
+def _verdict_block():
+    return HTML.split("function renderResults()", 1)[1].split("renderSources();", 1)[0]
+
+
+def test_a_run_with_a_failed_gate_does_not_say_it_completed_successfully():
+    """Live: a timed-out analysis showed "Completed successfully · green after 1
+    self-correction" above "GATES PASSED 0/1". The platform's own failure mode in miniature."""
+    v = _verdict_block()
+    assert "gates not passed" in v or "not passed" in v
+    assert "unresolved" in v
+
+
+def test_a_self_correction_means_a_gate_that_recovered():
+    v = _verdict_block()
+    assert "finalGate[g].verdict==='pass' && gateTries[g]>1" in v, \
+        "a gate that failed and never recovered is being counted as a correction"
+
+
+def test_the_banner_badge_distinguishes_a_red_gate_from_a_clean_run():
+    assert "${blocked?'⛔':(unresolved?'!':'✓')}" in HTML
+
+
+def test_the_docstring_does_not_claim_an_enforcement_it_lacks():
+    """The prompt forbids the network; nothing stops it. Say so where someone will read it."""
+    assert "a prompt is not a sandbox" in SRC
+    demo = Path("docs/DEMO.md").read_text()
+    assert "Instructed only:" in demo and "not a sandbox" not in demo.split("Instructed only:")[0]
