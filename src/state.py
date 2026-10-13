@@ -130,6 +130,8 @@ class PipelineState(TypedDict, total=False):
     heal_notes: list[dict]         # self-healing agent's repair log (only real repairs)
     heal_escalations: list[dict]   # suspected PRODUCT defects — never auto-healed, raised for a human
     attempts: dict                 # {"generate_code": 1, "generate_ui_scripts": 2, ...}
+    analysis_artifacts: list[dict] # Data Analyst: the executed script, its charts, its report
+    analysis_report: dict          # what the executed script printed, plus the code that ran
     insights_artifacts: list[dict] # run-history analysis report + its computed figures
     insights_report: dict          # computed figures + the narrative written from them
     pr: dict                       # {"url": ..., "summary": ...}

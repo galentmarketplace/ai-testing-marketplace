@@ -456,6 +456,23 @@
   .ins-trend .t-sub, .ins-trend .t-few { font-size:11px; color:var(--muted); margin-top:4px;
                                          font-family:var(--font-mono); }
   .spark { display:block; overflow:visible; }
+  .ana-approach { font-size:12.5px; color:var(--muted); margin-top:12px; font-style:italic; }
+  .ana-out { font-family:var(--font-mono); font-size:11.5px; line-height:1.55; color:var(--text);
+             background:var(--bg); border:1px solid var(--border); border-radius:8px;
+             padding:12px 14px; margin:0; overflow-x:auto; white-space:pre;
+             max-height:420px; overflow-y:auto; }
+  .ana-out.bad { color:var(--fail); border-color:rgba(239,68,68,.35); }
+  .ana-charts { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:14px; }
+  .ana-chart { margin:0; background:var(--panel2); border:1px solid var(--border);
+               border-radius:10px; padding:10px; }
+  .ana-chart img { width:100%; border-radius:6px; display:block; background:#fff; }
+  .ana-img { min-height:120px; display:flex; align-items:center; justify-content:center;
+             color:var(--muted); font-size:11.5px; font-family:var(--font-mono); }
+  .ana-chart figcaption { margin-top:8px; font-size:11px; color:var(--muted);
+                          font-family:var(--font-mono); }
+  .ana-code summary { cursor:pointer; font-size:13px; font-weight:600; margin-bottom:10px; }
+  .ana-code summary .n { font-weight:400; font-size:11.5px; color:var(--muted);
+                         font-family:var(--font-mono); margin-left:6px; }
   .cov-sec { margin-top:20px; }
   .cov-sec h4 { margin:0 0 10px; font-size:13px; display:flex; align-items:baseline; gap:8px; }
   .cov-sec h4 .n { font-weight:400; font-size:11.5px; color:var(--muted); font-family:var(--font-mono); }
@@ -996,6 +1013,10 @@
     <div class="kpis" id="kpis"></div>
     <div class="result-links" id="resultLinks" style="display:none"></div>
 
+    <div class="cov-head" id="anaHead" style="display:none"><h3>Data analysis</h3>
+      <span class="journey-sub">the model wrote the code, the code produced the answer — both are below</span></div>
+    <div class="covreport" id="anaReport" style="display:none"></div>
+
     <div class="cov-head" id="insHead" style="display:none"><h3>Run insights</h3>
       <span class="journey-sub">computed from the run history — the write-up quotes these figures and no others</span></div>
     <div class="covreport" id="insReport" style="display:none"></div>
@@ -1372,8 +1393,18 @@ function renderArtifacts(){ if(!allArtifacts.length){$('artBody').innerHTML='<di
 function renderPR(pr){ $('prPill').style.display='inline-block'; $('prPill').className='pill pass'; $('prPill').textContent='DRAFTED';
   $('prBody').innerHTML=`<div style="font-weight:700;margin-bottom:4px">${escapeHtml(pr.title)}</div><div class="m" style="color:var(--muted);font-size:12px;margin-bottom:10px">${escapeHtml(pr.url)}</div><div class="prbody">${escapeHtml(pr.body)}</div>`; }
 
-async function viewArtifact(path){ $('modalTitle').textContent=path.split('/').pop(); $('modalCode').textContent='Loading…'; $('modal').classList.add('show');
-  try{const r=await fetch('/api/artifact?path='+encodeURIComponent(path));const d=await r.json();$('modalCode').textContent=d.content||JSON.stringify(d);}catch(e){$('modalCode').textContent='Could not load file: '+e;} }
+async function viewArtifact(path){ $('modalTitle').textContent=path.split('/').pop();
+  $('modalCode').textContent='Loading…'; $('modalCode').innerHTML='Loading…'; $('modal').classList.add('show');
+  try{
+    const r=await fetch('/api/artifact?path='+encodeURIComponent(path));
+    const d=await r.json();
+    // A chart is an artifact like any other; show it rather than its bytes.
+    if(d.base64 && (d.content_type||'').startsWith('image/')){
+      $('modalCode').innerHTML=`<img src="data:${d.content_type};base64,${d.base64}" alt="${escapeHtml(path.split('/').pop())}" style="max-width:100%;border-radius:8px">`;
+    } else {
+      $('modalCode').textContent=d.content||JSON.stringify(d);
+    }
+  }catch(e){ $('modalCode').textContent='Could not load file: '+e; } }
 function closeModal(){ $('modal').classList.remove('show'); }
 
 function resetUI(){ ['acBody','gateBody','runBody','artBody'].forEach(id=>$(id).innerHTML='<div class="empty">…</div>');
@@ -1428,6 +1459,7 @@ function stepNode(d){
   // existed on disk with no way to reach them from the Results screen.
   if(u.coverage_artifacts) _pushArts(u.coverage_artifacts);
   if(u.insights_artifacts) _pushArts(u.insights_artifacts);
+  if(u.analysis_artifacts) _pushArts(u.analysis_artifacts);
   if(u.run_results) renderRuns(u.run_results);
   if(u.gate_decisions) renderGates(u.gate_decisions);
   if(u.pr) renderPR(u.pr);
@@ -1534,6 +1566,9 @@ const FLOWS=[
   {id:'coverage', t:'Go Code Coverage', ic:'📈', cc:'#39c5cf', mode:'custom', tracks:['coverage','delivery'], scope:'on an existing Go repo',
    p:'Measure real coverage with -coverprofile, then CLOSE the gap: write unit tests for the uncovered functions, compile and run them, re-measure, and raise a pull request with the verified tests. Leave the destination blank to measure only.',
    chips:['go test -cover','Go Test Gen','verified','LCOV + Cobertura','COVERAGE Gate','PR']},
+  {id:'analysis', t:'Data Analyst', ic:'🧮', cc:'#c58bff', mode:'custom', tracks:['analysis'], scope:'on any data file — or on this platform\u2019s history',
+   p:'Ask a question about a data file in plain English. The agent writes a Python script, RUNS it, and reports what the script printed — plus any chart it drew and the exact source that produced them. If the script fails it reads the traceback and repairs it; if it still fails you get the traceback, not an answer. Leave the data source blank to analyse this platform\u2019s own run history.',
+   chips:['Writes Python','Executes it','Charts','Self-repairs','Shows the code','ANALYSIS Gate']},
   {id:'insights', t:'Run Insights', ic:'📊', cc:'#c58bff', mode:'custom', tracks:['insights'], scope:'on this platform\u2019s own run history',
    p:'Ask about your testing in plain English. Every figure is computed from the run history — completion and block rates per flow, which gate actually stops work, coverage and latency trends, cost — and the model writes the analysis from those figures only. Simulated runs are excluded, and a number in the write-up that is not in the data is reported as unverified.',
    chips:['Run history','Computed figures','Trends','Cost','INSIGHTS Gate']},
@@ -1589,6 +1624,10 @@ const FLOW_INTAKE={   // keyed by flow id
     FIELD('min_coverage','Minimum coverage %','text',false,'80','Statement-coverage floor for the COVERAGE gate (policy default 70%).',true),
     FIELD('dest_repo','Destination repo for the fix (owner/repo)','text',false,'org/service — blank = measure only, no PR','Where the generated tests are committed and the pull request is raised. Usually the same repository you are measuring.',true),
     FIELD('coverage_blocking','Block below threshold? (yes/no)','text',false,'no','Advisory by default (observe-first); yes = the gate FAILS below the threshold.')]},
+  analysis:{fields:[
+    FIELD('question','What do you want to know?','textarea',true,'e.g. "how does run duration vary by flow, and which flows block most? chart it"','The script is written to answer this. Be as specific as you would be with an analyst.',true),
+    FIELD('data_source','Data file — path or URL','text',false,'/path/to/data.csv or https://… — blank = this platform\u2019s run history','CSV, JSON or XLSX. A local file is copied before the script runs, so the original cannot be modified.',true),
+    FIELD('history_limit','Runs to export (when no data file)','text',false,'100','How much of the run history to export as the CSV the script analyses.')]},
   insights:{fields:[
     FIELD('question','What do you want to know?','textarea',false,'e.g. "which flow blocks most often, and is coverage holding?" — blank = a general review','Steers the analysis. The figures are computed either way; this decides what the write-up concentrates on.',true),
     FIELD('history_limit','How many recent runs to analyse','text',false,'50','The most recent N runs. Simulated runs are excluded from the figures and counted separately.',true)]},
@@ -1749,6 +1788,7 @@ function accumulate(d){ const u=d.update||{};
   if(u.acceptance_criteria) RUN.ac=u.acceptance_criteria;
   if(u.functional_cases) RUN.fcases=u.functional_cases;   // functional test cases derived from AC
   if(u.heal_notes) RUN.heal=u.heal_notes;                 // self-heal repair log (for the failure detail)
+  if(u.analysis_report) RUN.analysis_rep=u.analysis_report; // Data Analyst: executed script + its output
   if(u.insights_report) RUN.insights=u.insights_report;   // run-history analysis + its narrative
   if(u.coverage_report) RUN.coverage=u.coverage_report;   // statement coverage, per file + per function
   if(u.perf_vitals) RUN.vitals=u.perf_vitals;             // Core Web Vitals (lab) from the deployed build
@@ -1791,7 +1831,12 @@ function renderResults(){
     {v:`${gPass}/${gTot||0}`, k:'Gates passed', sub:'final verdicts'},
     // On a coverage run there are no cases to count, so "Tests passed —" is dead space:
     // show the figure that run actually produced.
-    (!tTot && RUN.insights && RUN.insights.ok)
+    (!tTot && RUN.analysis_rep)
+      ? {v: RUN.analysis_rep.ok ? `${(RUN.analysis_rep.stdout||'').trim().split('\n').length}` : '—',
+         k: RUN.analysis_rep.ok ? 'Lines computed' : 'No answer',
+         sub: RUN.analysis_rep.ok ? `${(RUN.analysis_rep.charts||[]).length} chart(s) · attempt ${RUN.analysis_rep.attempts}`
+                                  : `script failed ${RUN.analysis_rep.attempts}×`}
+    : (!tTot && RUN.insights && RUN.insights.ok)
       ? {v:`${RUN.insights.runs_analysed}`, k:'Runs analysed',
          sub:`#${RUN.insights.run_range.first}–#${RUN.insights.run_range.last}`}
     : (!tTot && RUN.security && RUN.security.ok)
@@ -1839,6 +1884,7 @@ function renderResults(){
   }).join('') : '<div class="empty">No gates in scope.</div>');
   $('rRuns').innerHTML = runs.length? runs.map(r=>{const total=r.passed+r.failed,ok=r.failed===0,perf=r.perf?` · p95 ${r.perf.p95_ms}ms · err ${(r.perf.error_rate*100).toFixed(1)}%`:'',it=runTries[r.suite]>1?` <span class="m">· iteration ${runTries[r.suite]}</span>`:'';return `<div class="run"><span><b>${r.suite}</b>${it}</span><span class="rate" style="color:${ok?'var(--ok)':'var(--fail)'}">${r.passed}/${total} passed<span class="m">${perf}</span></span></div>`;}).join('') : '<div class="empty">No test runs.</div>';
   renderSources();            // what came in from each source of truth (Jira / dev repo / app)
+  renderAnalysis();           // the generated script, what it printed, and the charts it drew
   renderInsights();           // the run-history analysis, and whether its prose invented a figure
   renderCoverage();           // the coverage report: total, per file, per function, before → after
   renderPerformance();        // the load test: what was tested, the latencies, the thresholds
@@ -2196,6 +2242,84 @@ function renderSecurityReport(){
   el.innerHTML=`<div class="cov-card">${html}</div>`;
 }
 
+// ===== Data analysis: the script, its output, its charts =====
+// The order on screen is the argument: what the script PRINTED comes first and is labelled
+// as the script's own output, the charts it drew come next, and the source that produced
+// both is one click away. Nothing here is the model's description of the data.
+async function _loadChart(el, path){
+  try{
+    const r = await fetch('/api/artifact?path='+encodeURIComponent(path));
+    const d = await r.json();
+    if(d.base64 && (d.content_type||'').startsWith('image/')){
+      el.innerHTML = `<img src="data:${d.content_type};base64,${d.base64}" `
+        + `alt="chart produced by the analysis script" loading="lazy">`;
+    } else { el.textContent = 'chart could not be loaded'; }
+  }catch(e){ el.textContent = 'chart could not be loaded'; }
+}
+
+function renderAnalysis(){
+  const head=$('anaHead'), el=$('anaReport'); if(!el) return;
+  const a=RUN.analysis_rep;
+  if(!a){ el.style.display='none'; if(head) head.style.display='none'; return; }
+  el.style.display='block'; if(head) head.style.display='flex';
+
+  const charts=a.charts||[];
+  const lines=(a.stdout||'').trim() ? (a.stdout||'').trim().split('\n').length : 0;
+  let html=`<div class="cov-top">
+      <div class="cov-score ${a.ok?'good':'poor'}">
+        <div class="cov-pct">${a.ok?lines:'—'}</div>
+        <div class="cov-lbl">${a.ok?'lines computed':'no answer'}</div>
+      </div>
+      <div class="cov-facts">
+        <div class="perf-target"><span class="k">Question</span> <b>${escapeHtml(a.question||'')}</b></div>
+        <div class="cov-rows">
+          <div class="cov-r"><span>Data</span><b>${escapeHtml(a.data_file||'—')}</b></div>
+          <div class="cov-r"><span>Source</span><b>${escapeHtml(a.source||'—')}</b></div>
+          <div class="cov-r"><span>Attempts</span><b class="${a.attempts>1?'warn':'ok'}">${a.attempts}</b></div>
+          <div class="cov-r"><span>Charts</span><b>${charts.length}</b></div>
+        </div>
+      </div></div>`;
+
+  html += a.ok
+    ? `<div class="cov-allgreen">✓ This answer is the script's own output. The model wrote the
+        code; it did not write the numbers.</div>`
+    : `<div class="cov-warn">⚠ The script failed on all ${a.attempts} attempt(s). There is no
+        answer — the traceback is shown instead, because a result the code never computed
+        would be a fabrication.</div>`;
+
+  if(a.approach) html += `<div class="ana-approach">${escapeHtml(a.approach)}</div>`;
+
+  html += `<div class="cov-sec"><h4>${a.ok?'Output':'Traceback'}
+      <span class="n">${a.ok?'printed by the script':'why it could not answer'}</span></h4>
+    <pre class="ana-out ${a.ok?'':'bad'}">${escapeHtml((a.ok?a.stdout:a.error)||'(no output)')}</pre></div>`;
+
+  if(charts.length){
+    html += `<div class="cov-sec"><h4>Charts <span class="n">drawn by the script</span></h4>
+      <div class="ana-charts">`
+      + charts.map((c,i)=>`<figure class="ana-chart" data-chart="${i}">
+          <div class="ana-img" id="anaimg${i}">loading…</div>
+          <figcaption>${escapeHtml(c.split('/').pop())}</figcaption></figure>`).join('')
+      + `</div></div>`;
+  }
+
+  if((a.attempt_log||[]).length>1){
+    html += `<div class="cov-sec"><h4>Repair loop <span class="n">each failure fed back as a traceback</span></h4>
+      <table class="covtable"><thead><tr><th class="num">Attempt</th><th>Outcome</th></tr></thead><tbody>`
+      + a.attempt_log.map(x=>`<tr class="${x.ok?'good':'poor'}"><td class="num pc">${x.attempt}</td>
+          <td class="f">${x.ok?'ran successfully':escapeHtml((x.error||'failed').split('\n').pop())}</td></tr>`).join('')
+      + `</tbody></table></div>`;
+  }
+
+  if(a.code){
+    html += `<div class="cov-sec"><details class="ana-code"><summary>The code that produced this
+      <span class="n">${a.code.split('\n').length} lines</span></summary>
+      <pre class="ana-out">${escapeHtml(a.code)}</pre></details></div>`;
+  }
+
+  el.innerHTML=`<div class="cov-card">${html}</div>`;
+  charts.forEach((c,i)=>{ const box=document.getElementById('anaimg'+i); if(box) _loadChart(box, c); });
+}
+
 // ===== Run insights: analysis of the platform's own history =====
 // The panel's job is to keep two things apart: figures that were COMPUTED from the run
 // store, and prose a model wrote about them. Where the prose states a number the data does
@@ -2350,6 +2474,7 @@ function renderInsights(){
 
 // ===== The Ticket → Production journey: each SDLC stage, its agent, gate & artifacts =====
 const JOURNEY_STAGES = [
+  {key:'analysis', name:'Data Analysis',       ic:'🧮', node:'analyze_data',           gate:'ANALYSIS', arts:['analysis']},
   {key:'insights', name:'Run Insights',        ic:'📊', node:'analyze_runs',           gate:'INSIGHTS', arts:['insights']},
   {key:'req',      name:'Requirements',        ic:'🗺️', node:'generate_ac',            gate:null,       arts:[]},
   {key:'fcases',   name:'Functional Cases',    ic:'📋', node:'generate_functional_cases', gate:null,     arts:['functional']},
@@ -2366,7 +2491,7 @@ const JOURNEY_STAGES = [
   {key:'ci',       name:'Jenkins CI',          ic:'🏗️', node:'run_jenkins',            gate:'JENKINS',  arts:[]},
   {key:'delivery', name:'Delivery → Production',ic:'🚀', node:'open_pr',                gate:null,       arts:[]},
 ];
-const AGENT_LABEL = {analyze_runs:'Insights agent', generate_ac:'Acceptance Criteria agent', generate_code:'Dev agent', deploy_app:'Deploy agent', run_unit_tests:'Unit Test agent', go_coverage:'Go Coverage agent', generate_go_tests:'Go Test Generation agent',
+const AGENT_LABEL = {analyze_data:'Data Analyst agent', analyze_runs:'Insights agent', generate_ac:'Acceptance Criteria agent', generate_code:'Dev agent', deploy_app:'Deploy agent', run_unit_tests:'Unit Test agent', go_coverage:'Go Coverage agent', generate_go_tests:'Go Test Generation agent',
   generate_ui_scripts:'Playwright agent', oracle_check:'Oracle Check (test-oracle auditor)', generate_perf_scripts:'Performance agent', select_regression:'Regression agent',
   generate_security_scan:'Security agent', generate_a11y:'Accessibility agent', generate_contract:'Contract agent',
   generate_functional_cases:'Functional Case agent', run_jenkins:'Jenkins CI agent', open_pr:'PR agent'};
@@ -2398,6 +2523,11 @@ function renderJourney(gateTries){
     let ev='';
     if(st.key==='req' && RUN.ac){ const n=(RUN.ac.criteria||RUN.ac.acceptance_criteria||[]).length||RUN.ac.length; ev=`Parsed acceptance criteria${n?` — ${n} criteria`:''} (source of truth).`; }
     if(st.key==='fcases' && RUN.fcases){ ev=`Derived ${RUN.fcases.length} functional test case(s) from the acceptance criteria — each automated case-wise.`; }
+    if(st.key==='analysis' && RUN.analysis_rep){ const a=RUN.analysis_rep;
+      ev = a.ok ? `Wrote a Python script, ran it against <code>${escapeHtml(a.data_file||'')}</code> and reported `
+                  + `what it printed — ${(a.stdout||'').trim().split('\n').length} line(s) and `
+                  + `${(a.charts||[]).length} chart(s), on attempt ${a.attempts}.`
+                : `The script failed on all ${a.attempts} attempt(s), so the run reports the traceback rather than an answer.`; }
     if(st.key==='insights' && RUN.insights && RUN.insights.ok){ const i=RUN.insights;
       const bad=(i.unverified_figures||[]).length;
       ev=`Analysed ${i.runs_analysed} run(s) (#${i.run_range.first}–#${i.run_range.last}) — `

@@ -674,7 +674,16 @@ def artifact(path: str, request: Request, principal: dict = Depends(require_auth
     elif not principal["admin"]:
         raise HTTPException(404, "not found")      # legacy shared-directory artifacts: admin only
     _audit(request, principal, "artifact.read", str(target).split("generated/")[-1], run=owner_run or "-")
-    return {"path": str(target), "content": target.read_text()}
+    # Charts are artifacts too. read_text() raises on a PNG, so a binary artifact comes back
+    # base64-encoded with its media type and the page renders it as a data: URI.
+    try:
+        return {"path": str(target), "content": target.read_text()}
+    except (UnicodeDecodeError, ValueError):
+        import base64
+        import mimetypes
+        ctype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        return {"path": str(target), "content_type": ctype,
+                "base64": base64.b64encode(target.read_bytes()).decode()}
 
 
 # ---------- Identity + API tokens ----------

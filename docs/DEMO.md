@@ -235,6 +235,47 @@ Two secondary points if there is appetite:
   80% of the source files, so the effective figure is 72.6%. A tool reporting 90.7% alone is
   flattering you
 
+## Data analysis — ~25s
+
+The one that looks like magic and isn't. **Playbooks → Data Analyst.** Ask a question, leave
+the data source blank to analyse the platform's own history, untick **Mock mode** and run.
+
+> *"Which flows block most often, and how does run cost relate to duration? Chart both."*
+
+It wrote a pandas script, ran it, and printed a block-rate table for all 20 flows plus two
+charts — 38 lines of computed output, on the first attempt, in 23 seconds. Point at the green
+line under the figures and read it out:
+
+> ✓ This answer is the script's own output. The model wrote the code; it did not write the numbers.
+
+Then open **"The code that produced this"** at the bottom of the panel. That is the whole
+argument: every figure on screen can be traced to the line of Python that computed it. A
+chatbot asked the same question would simply tell you a number.
+
+**Have the failure ready, because it is the better story.** On an earlier run the first script
+died on a nested f-string. The agent read the traceback, repaired the script, and succeeded on
+attempt 2 — and the panel shows both attempts. If it had still failed, the run would report the
+traceback and the ANALYSIS gate would **fail**, because a result the code never computed is a
+fabrication.
+
+**Point it at your own data to make it concrete.** Put a CSV path in *Data file* — a flaky-test
+export is the one that lands:
+
+> *"Which tests are flaky (both pass and fail across runs)? Rank them and chart the flake rate."*
+
+On a 12-row sample it correctly ranked `login_locked` (66.7%) above `checkout_total` (33.3%)
+and **excluded `tax_rounding`** — which fails every time, so it is broken, not flaky. Nobody
+told it that distinction.
+
+**If asked about safety** — the script runs in an isolated interpreter (`python -I`) in a fresh
+per-run directory, with no secrets in its environment, no network use, a hard timeout, and the
+data file *copied* in so the original cannot be modified.
+
+**The honest comparison, if someone names Julius AI or ChatGPT's analyst:** the mechanism is the
+same and we did not invent it. What is ours is that the executed code ships as evidence, a
+failed script blocks instead of answering, and the agent sits in a pipeline next to the gates
+that test the product.
+
 ## Run insights — ~16s
 
 **Playbooks → Run Insights.** No Configuration needed — this one analyses the platform

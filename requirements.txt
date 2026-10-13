@@ -19,3 +19,9 @@ mcp>=1.2
 
 # Security agent: SAST engine (other scanners are optional binaries, detected at runtime)
 semgrep>=1.60
+
+# Data Analyst agent: the generated analysis code runs against these.
+# matplotlib is used headless (Agg) — the agent never opens a display.
+pandas>=2.2
+matplotlib>=3.8
+openpyxl>=3.1          # .xlsx input

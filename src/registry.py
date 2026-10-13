@@ -24,6 +24,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from .agents.ac_agent import generate_ac
+from .agents.data_analyst_agent import analysis_gate, analyze_data
 from .agents.deploy_agent import deploy_app
 from .agents.dev_agent import generate_code
 from .agents.functional_case_agent import generate_functional_cases
@@ -176,6 +177,21 @@ REGISTRY: list[AgentSpec] = [
         on_fail_reset=(),   # reporting, not policy — it never loops
         produces="check that every figure in the write-up is traceable to the computed data",
         display=[DisplayNode("insights_gate", "INSIGHTS Gate", "\u2705", _C["eval"], "EVALUATION", "gate", parent="insights")],
+    ),
+    # Julius-style analysis: the MODEL writes the code, the CODE produces the answer. The
+    # opposite split from Insights above, and the reason execution is mandatory here.
+    AgentSpec(
+        id="analyze_data", label="Data Analyst", kind="agent", fn=analyze_data,
+        tracks=("analysis",), category="Quality",
+        produces="write Python for a question about a data file, run it, and report what it computed",
+        display=[DisplayNode("analysis", "Data Analyst", "\U0001f9ee", _C["plan"], "ANALYSIS", "agent", column="analysis")],
+    ),
+    AgentSpec(
+        id="analysis_gate", label="ANALYSIS Gate", kind="gate", fn=analysis_gate,
+        tracks=("analysis",), depends_on=("analyze_data",), gate_name="ANALYSIS",
+        on_fail_reset=(),   # the repair loop lives inside the agent, around the traceback
+        produces="confirm the answer came from a script that ran, not from the model",
+        display=[DisplayNode("analysis_gate", "ANALYSIS Gate", "\u2705", _C["eval"], "EVALUATION", "gate", parent="analysis")],
     ),
     AgentSpec(
         id="generate_functional_cases", label="Functional Cases", kind="agent", fn=generate_functional_cases,
