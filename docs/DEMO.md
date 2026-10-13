@@ -44,6 +44,8 @@ caffeinate -dimsu &
 # 2. everything the demo touches
 curl -s -o /dev/null -w 'dashboard      %{http_code}\n' http://127.0.0.1:8090/
 curl -s -o /dev/null -w 'public URL     %{http_code}\n' https://deepness-t-shirt-unwelcome.ngrok-free.dev/
+#    200 = good · 404 = the tunnel is down (restart ngrok, see the table below) · 000 = no DNS/network
+curl -s -m 5 http://127.0.0.1:4040/api/tunnels >/dev/null && echo 'ngrok agent    running' || echo 'ngrok agent    NOT RUNNING'
 curl -s -o /dev/null -w 'SauceDemo      %{http_code}\n' https://www.saucedemo.com
 curl -s -o /dev/null -w 'Jenkins        %{http_code}\n' http://localhost:8081/login
 docker ps --filter name=marketplace-jenkins --format 'jenkins        {{.Status}}'
@@ -152,7 +154,8 @@ Then make the ask: **two pilot teams.** Everything else is work we can complete 
 | Symptom | Do this |
 |---|---|
 | Run blocks or a gate fails | **Do not debug.** Say "this is the self-correction loop, and it blocks rather than reporting a false pass" — that is a true and favourable statement. Switch to the completed run in your second tab |
-| Dashboard unreachable | The tunnel or the platform stopped. Use `http://127.0.0.1:8090` locally and carry on |
+| Dashboard unreachable **on the public URL** | The tunnel dropped, not the platform. A `404` from the ngrok address means its edge answered but no agent is connected. Restart it: `ngrok http 8090 --url=https://deepness-t-shirt-unwelcome.ngrok-free.dev` — it is a reserved static domain, so the URL survives a restart. Then carry on; or just use `http://127.0.0.1:8090` locally |
+| Dashboard unreachable **locally too** | The platform stopped. `PORT=8090 .venv/bin/python -m web.server` |
 | Jenkins down | `docker start marketplace-jenkins`, allow 60 seconds |
 | Run takes longer than 3 minutes | Expected — measured 111 to 363 seconds. The gate loop is the interesting part; narrate it |
 | Live run blocks | Say it accurately: "it refused to pass at 94% against a 95% policy, and blocked instead of reporting a false pass." Then continue with the completed run |
