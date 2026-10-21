@@ -82,15 +82,36 @@ mechanisms rather than assert them.
 Open **SCRUM-5** in Jira. Show the Acceptance Criteria section. Say: this is the only input.
 Not a prompt, not a description of the app. The ticket.
 
-### 3. The live run, 2 to 6 minutes
+### 3. The live run, 3 to 6 minutes
 
-Start it from the dashboard, or:
+**Playbooks → Functional (Jira → Cases → Automation).** Under *Use a saved Configuration*
+pick **Galent (Jira SCRUM · SauceDemo)**. The green chips then show it is supplying the
+source repo, the app URL, the login path, the login user, the login password, the PR
+destination and the Jira connection — seven things you do not have to type, and the screen
+names each one.
+
+**You fill in exactly one field:**
+
+| Field | Value |
+|---|---|
+| **Jira ticket key** | `SCRUM-5` |
+| *What to cover* (optional) | leave blank |
+
+Untick **Mock mode**. Press **Run pipeline**.
+
+That is worth saying out loud: the only input to the entire pipeline is a ticket number.
+
+*Verified on 21 October — run #122: 11 cases, QG1 red once then green, Jenkins SUCCESS
+(12 passed, 0 failed), pull request opened and mergeable, 288 seconds, $0.40.*
+
+Or start the same thing from the command line:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8090/api/run \
   -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' -d '{
-    "mock": false, "mode": "custom", "tracks": ["criteria","functional"],
-    "project_id": "f07ecd4e1a8d42d8a68d354dfe2b39fa", "ticket": "SCRUM-5" }'
+    "mock": false, "mode": "custom",
+    "tracks": ["criteria","functional","delivery","jenkins"],
+    "project_id": "f07ecd4e1a8d42d8a68d354dfe2b39fa", "ticket": "SCRUM-5", "inputs": {} }'
 ```
 
 Narrate the execution view as it moves. The order is always the same:
