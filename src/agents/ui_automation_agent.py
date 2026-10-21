@@ -343,7 +343,17 @@ def generate_ui_scripts(state: PipelineState) -> dict:
         raise RuntimeError("Playwright agent produced no spec — the LLM returned empty output after retries "
                            "(model/token limit). Try a stronger model or a narrower scope prompt.")
 
-    artifacts = list(state.get("test_artifacts", []))
+    # A RETRY SUPERSEDES — it does not accumulate. Each QG1 attempt wrote a new spec file
+    # and every one of them was kept, so delivery pushed all of them to the branch: the local
+    # Feature Runner executed only the newest, while Jenkins checked out the branch and ran
+    # the union, including the attempts QG1 had already rejected. Any run that needed more
+    # than one attempt was therefore guaranteed to go green locally and red in CI, and the
+    # CI healer then spent its cycles trying to repair tests this run had already discarded.
+    artifacts = [a for a in state.get("test_artifacts", []) if a.get("type") != "playwright"]
+    superseded = len(state.get("test_artifacts", [])) - len(artifacts)
+    if superseded:
+        print(f"  [Playwright Agent] replacing {superseded} spec(s) from the previous attempt "
+              f"— a retry supersedes, so CI runs what this attempt produced and nothing else")
     for f in files:
         out = sandbox.run_workspace() / Path(f["path"]).relative_to("generated")
         out.parent.mkdir(parents=True, exist_ok=True)
