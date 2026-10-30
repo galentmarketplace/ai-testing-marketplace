@@ -338,7 +338,7 @@ def build_manifest() -> dict:
         for d in spec.display:
             if d.column:                                   # a top-level agent lane
                 col = {"id": d.column, "label": d.label, "icon": d.icon, "color": d.color,
-                       "cap": d.cap, "children": [],
+                       "cap": d.cap, "kind": d.kind, "children": [],
                        "tracks": list(spec.tracks), "needs_build": spec.needs_build,
                        "ship": spec.ship, "always": not spec.tracks and not spec.ship}
                 col_index[d.column] = col
@@ -375,15 +375,37 @@ def build_manifest() -> dict:
     # Marketplace catalog: one browsable entry per agent capability. Auto rule = top-level lane nodes;
     # a spec can opt in/out explicitly via `catalog` (e.g. a verifier that lives inside another lane).
     agents_cat = []
+    # Readable names for the wiring an agent detail page shows (depends_on / on_fail_reset are ids).
+    _label_of = {s.id: (s.display[0].label if s.display else s.label) for s in REGISTRY}
+    _gate_owner = {s.gate_name: _label_of[s.id] for s in REGISTRY if s.gate_name}
     for spec in REGISTRY:
         d = spec.display[0] if spec.display else None
         if not d:
             continue
         show = spec.catalog if spec.catalog is not None else bool(d.column)
         if show:
+            lane = d.column or d.parent
+            # the runners/gates that execute inside this agent's lane — its own pipeline
+            steps = [{"id": c.id, "label": c.label, "icon": c.icon, "color": c.color,
+                      "kind": c.kind, "cap": c.cap}
+                     for sp in REGISTRY for c in sp.display if c.parent and c.parent == lane]
             agents_cat.append({"id": spec.id, "label": d.label, "icon": d.icon, "color": d.color,
                                "kind": spec.kind, "produces": spec.produces, "category": spec.category,
-                               "tracks": list(spec.tracks)})
+                               "tracks": list(spec.tracks),
+                               # ---- detail-page fields ----
+                               "cap": d.cap,
+                               "column": lane,
+                               "depends_on": [_label_of.get(x, x) for x in spec.depends_on],
+                               "gate_name": spec.gate_name,
+                               "on_fail_reset": [_label_of.get(x, x) for x in spec.on_fail_reset],
+                               "gates_judging": sorted({s2.gate_name for s2 in REGISTRY
+                                                        if s2.gate_name and spec.id in s2.on_fail_reset}),
+                               "needs_build": spec.needs_build,
+                               "ship": spec.ship, "final": spec.final, "post_pr": spec.post_pr,
+                               "superseded_by_jenkins": spec.superseded_by_jenkins,
+                               "trigger_only": spec.trigger_only,
+                               "max_retries": spec.max_retries,
+                               "steps": steps})
 
     return {"columns": columns, "route": route, "node_meta": node_meta, "tracks": tracks_cat,
             "agents": agents_cat,
